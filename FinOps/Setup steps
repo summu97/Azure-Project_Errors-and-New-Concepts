@@ -1,0 +1,129 @@
+✅ Steps to install Python 3.8+ on Ubuntu (using deadsnakes PPA)
+sudo apt update
+sudo apt install software-properties-common -y
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update
+sudo apt install python3.8 python3.8-venv python3.8-dev -y
+
+Set Python 3.8 as default:
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+
+python3 --version
+
+Install Azure SDKs:
+pip install azure-identity azure-mgmt-costmanagement
+
+
+Step 2: Authenticate to Azure
+az login
+
+Option B: Use Managed Identity (for VM/AKS/Functions)
+Make sure your Managed Identity has Cost Management Reader role assigned to the Subscription.
+
+Step 3: Assign Required Role
+az role assignment create \
+  --assignee <object-id-of-service-principal-or-managed-identity> \
+  --role "Cost Management Reader" \
+  --scope /subscriptions/<your-subscription-id>
+
+EX:
+az role assignment create \
+  --assignee 6b413826-05c1-4968-88c7-f80d50885226 \
+  --role "Cost Management Reader" \
+  --scope /subscriptions/db75716a-bc0d-4d76-872c-0c6179241fc3
+
+az role assignment create --assignee 6b413826-05c1-4968-88c7-f80d50885226 --role Reader --scope /subscriptions/db75716a-bc0d-4d76-872c-0c6179241fc3
+----------------------
+Get the VM's System Assigned Identity Object ID
+az vm show \
+  --name <vm-name> \
+  --resource-group <resource-group-name> \
+  --query identity.principalId \
+  --output tsv
+
+EX:
+az vm show \
+  --name OperatorVM-dev \
+  --resource-group RG-AZUREPROJECT-DEV \
+  --query identity.principalId \
+  --output tsv
+6b413826-05c1-4968-88c7-f80d50885226
+
+
+To get the currently active Azure subscription:
+az account show --query id -o tsv
+az account show --query id --output tsv
+
+To Show Full Details of Current Subscription:
+az account show
+----------------------
+ Step 4: Save the Script
+sudo vim azure_cost_report.py
+
+from azure.identity import DefaultAzureCredential
+from azure.mgmt.costmanagement import CostManagementClient
+from azure.mgmt.costmanagement.models import QueryDefinition, QueryTimePeriod
+
+# Initialize Azure credentials and client
+credential = DefaultAzureCredential()
+client = CostManagementClient(credential)
+
+# Replace this with your real subscription ID
+subscription_id = "db75716a-bc0d-4d76-872c-0c6179241fc3"
+
+# Define your scope - subscription level
+scope = f"subscriptions/{subscription_id}"
+
+# Define the query parameters
+query = QueryDefinition(
+    type="Usage",
+    timeframe="Custom",
+    time_period=QueryTimePeriod(
+        from_property="2025-04-01T00:00:00Z",  # Start date ISO8601 format
+        to="2025-04-23T00:00:00Z"              # End date ISO8601 format
+    ),
+    dataset={
+        "granularity": "Daily",
+        "aggregation": {
+            "totalCost": {
+                "name": "Cost",
+                "function": "Sum"
+            }
+        },
+        "grouping": [
+            {
+                "type": "Dimension",
+                "name": "ResourceGroup"
+            }
+        ]
+    }
+)
+
+# Run the query
+response = client.query.usage(scope=scope, parameters=query)
+
+print("Cost Report:")
+for row in response.rows:
+    print(row)
+
+
+Step 5: Run the Script
+python3 azure_cost_report.py
+
+Optional: Export to CSV
+
+If you want to save the result:
+
+Add this at the bottom of the script:
+
+import csv
+with open("cost_report.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["Resource Name", "Cost"])
+    for row in response.rows:
+        writer.writerow(row)
+
+pip3 install tabulate
+pip install azure-mgmt-resource
+pip install azure-identity azure-mgmt-resource azure-mgmt-consumption tabulate
+
