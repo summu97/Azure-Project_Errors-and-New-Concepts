@@ -127,3 +127,7 @@ pip3 install tabulate
 pip install azure-mgmt-resource
 pip install azure-identity azure-mgmt-resource azure-mgmt-consumption tabulate
 
+
+
+scp -i OperatorVM_key.pem "azureuser@172.206.212.231:/home/azureuser/Azure_Cost_Report_May_2025_from_01-May-2025_to_23-May-2025.xlsx" /c/U
+sers/sbade/Desktop/
