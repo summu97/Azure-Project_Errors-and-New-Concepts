@@ -1,0 +1,191 @@
+from azure.identity import DefaultAzureCredential
+from azure.mgmt.costmanagement import CostManagementClient
+from azure.mgmt.costmanagement.models import QueryDefinition, QueryTimePeriod
+from azure.mgmt.resource import ResourceManagementClient
+from collections import defaultdict
+from datetime import datetime, timedelta
+import calendar
+import openpyxl
+from openpyxl.styles import Font, Alignment
+
+credential = DefaultAzureCredential()
+subscription_id = "db75716a-bc0d-4d76-872c-0c6179241fc3"
+scope = f"subscriptions/{subscription_id}"
+
+cost_client = CostManagementClient(credential)
+resource_client = ResourceManagementClient(credential, subscription_id)
+
+today = datetime.utcnow().date()
+start_of_month = today.replace(day=1)
+_, days_in_month = calendar.monthrange(today.year, today.month)
+elapsed_days = (today - start_of_month).days + 1
+
+first_day_prev_month = (start_of_month - timedelta(days=1)).replace(day=1)
+last_day_prev_month = start_of_month - timedelta(days=1)
+prev_month_name = first_day_prev_month.strftime("%B %Y")
+
+def get_resource_statuses():
+    resource_statuses = {}
+    for resource in resource_client.resources.list():
+        resource_statuses[resource.id.lower()] = "available"
+    return resource_statuses
+
+resource_statuses = get_resource_statuses()
+
+def generate_excel_report(response, previous_month_cost):
+    columns = [col.name for col in response.columns]
+    if not response.rows:
+        print("No cost data found.")
+        return False
+
+    grouped_costs = defaultdict(lambda: defaultdict(float))
+    currency = "INR"
+    active_total_so_far = 0.0
+    deleted_total_so_far = 0.0
+    resource_id_to_name = {}
+
+    for row in response.rows:
+        row_data = dict(zip(columns, row))
+        full_resource_id = row_data.get('ResourceId', 'N/A')
+        resource_group = row_data.get('ResourceGroup', 'UnknownGroup')
+        resource_name = full_resource_id.split("/")[-1] if full_resource_id != "N/A" else "N/A"
+        cost = float(row_data.get('Cost', 0))
+        currency = row_data.get('Currency', currency)
+
+        grouped_costs[resource_group][resource_name] += cost
+        resource_id_to_name[full_resource_id.lower()] = resource_name
+
+    # Prepare formatted date strings
+    report_start_date_str = start_of_month.strftime("%d-%b-%Y")
+    report_end_date_str = today.strftime("%d-%b-%Y")
+    date_range_str = f"{report_start_date_str} to {report_end_date_str}"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cost Report"
+
+    # Header with better formatting
+    ws.append(["Azure Cost Report Summary"])
+    ws.append([f"Report Period: {date_range_str}"])
+    ws.append([])
+
+    # Style header
+    header_font = Font(bold=True)
+    center_align = Alignment(horizontal="center")
+
+    row_cursor = 4
+
+    for rg_name, resources in grouped_costs.items():
+        ws.cell(row=row_cursor, column=1, value=f"Resource Group: {rg_name}").font = Font(bold=True, size=12)
+        row_cursor += 1
+
+        # Table header
+        headers = ["Resource Name", "Date Range", "Cost So Far", "Estimated Total", "Status"]
+        for col_num, header in enumerate(headers, start=1):
+            cell = ws.cell(row=row_cursor, column=col_num, value=header)
+            cell.font = header_font
+            cell.alignment = center_align
+        row_cursor += 1
+
+        for resource, cost_so_far in resources.items():
+            matched_resource_ids = [
+                rid for rid, name in resource_id_to_name.items()
+                if name == resource and f"/{rg_name.lower()}/" in rid
+            ]
+
+            status = "deleted"
+            if any(res_id in resource_statuses for res_id in matched_resource_ids):
+                status = "available"
+
+            if status == "deleted":
+                estimated_cost_display = "----------------"
+                deleted_total_so_far += cost_so_far
+            else:
+                estimated_total = (cost_so_far / elapsed_days) * days_in_month
+                estimated_cost_display = round(estimated_total, 2)
+                active_total_so_far += estimated_total
+
+            ws.append([
+                resource,
+                date_range_str,
+                round(cost_so_far, 2),
+                estimated_cost_display,
+                status
+            ])
+            row_cursor += 1
+        row_cursor += 1  # Blank line after each resource group
+
+    # Summary at the end
+    ws.append([])
+    ws.append(["Summary"])
+    ws.append(["Estimated Total Monthly Cost (active resources only):", round(active_total_so_far, 2), currency])
+    ws.append(["Total Cost So Far for Deleted Resources:", round(deleted_total_so_far, 2), currency])
+    ws.append([f"Total Cost of Previous Month ({prev_month_name}):", round(previous_month_cost, 2), currency])
+
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_length = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        adjusted_width = max_length + 2
+        ws.column_dimensions[col_letter].width = adjusted_width
+
+    # Save with date range in filename
+    filename = f"Azure_Cost_Report_{today.strftime('%B_%Y')}_from_{start_of_month.strftime('%d-%b-%Y')}_to_{today.strftime('%d-%b-%Y')}.xlsx"
+    wb.save(filename)
+    print(f"Excel report generated: {filename}")
+    return True
+
+# === Queries ===
+query_current_month = QueryDefinition(
+    type="Usage",
+    timeframe="Custom",
+    time_period=QueryTimePeriod(
+        from_property=start_of_month.isoformat() + "T00:00:00Z",
+        to=today.isoformat() + "T23:59:59Z"
+    ),
+    dataset={
+        "granularity": "Daily",
+        "aggregation": {
+            "totalCost": {
+                "name": "Cost",
+                "function": "Sum"
+            }
+        },
+        "grouping": [
+            {"type": "Dimension", "name": "ResourceGroup"},
+            {"type": "Dimension", "name": "ResourceId"}
+        ]
+    }
+)
+
+print(f"Fetching cost data from {start_of_month} to {today}...")
+response_current = cost_client.query.usage(scope=scope, parameters=query_current_month)
+
+query_prev_month = QueryDefinition(
+    type="Usage",
+    timeframe="Custom",
+    time_period=QueryTimePeriod(
+        from_property=first_day_prev_month.isoformat() + "T00:00:00Z",
+        to=last_day_prev_month.isoformat() + "T23:59:59Z"
+    ),
+    dataset={
+        "granularity": "None",
+        "aggregation": {
+            "totalCost": {
+                "name": "Cost",
+                "function": "Sum"
+            }
+        }
+    }
+)
+
+print(f"Fetching total cost for previous month: {prev_month_name}...")
+response_prev = cost_client.query.usage(scope=scope, parameters=query_prev_month)
+
+previous_month_cost = float(response_prev.rows[0][0]) if response_prev.rows else 0.0
+
+# Generate Excel report
+generate_excel_report(response_current, previous_month_cost)
