@@ -40,6 +40,7 @@ def generate_excel_report(response, previous_month_cost):
 
     grouped_costs = defaultdict(lambda: defaultdict(float))
     currency = "INR"
+    active_total_estimated = 0.0
     active_total_so_far = 0.0
     deleted_total_so_far = 0.0
     resource_id_to_name = {}
@@ -55,7 +56,6 @@ def generate_excel_report(response, previous_month_cost):
         grouped_costs[resource_group][resource_name] += cost
         resource_id_to_name[full_resource_id.lower()] = resource_name
 
-    # Prepare formatted date strings
     report_start_date_str = start_of_month.strftime("%d-%b-%Y")
     report_end_date_str = today.strftime("%d-%b-%Y")
     date_range_str = f"{report_start_date_str} to {report_end_date_str}"
@@ -64,22 +64,18 @@ def generate_excel_report(response, previous_month_cost):
     ws = wb.active
     ws.title = "Cost Report"
 
-    # Header with better formatting
     ws.append(["Azure Cost Report Summary"])
     ws.append([f"Report Period: {date_range_str}"])
     ws.append([])
 
-    # Style header
     header_font = Font(bold=True)
     center_align = Alignment(horizontal="center")
-
     row_cursor = 4
 
     for rg_name, resources in grouped_costs.items():
         ws.cell(row=row_cursor, column=1, value=f"Resource Group: {rg_name}").font = Font(bold=True, size=12)
         row_cursor += 1
 
-        # Table header
         headers = ["Resource Name", "Date Range", "Cost So Far", "Estimated Total", "Status"]
         for col_num, header in enumerate(headers, start=1):
             cell = ws.cell(row=row_cursor, column=col_num, value=header)
@@ -103,7 +99,8 @@ def generate_excel_report(response, previous_month_cost):
             else:
                 estimated_total = (cost_so_far / elapsed_days) * days_in_month
                 estimated_cost_display = round(estimated_total, 2)
-                active_total_so_far += estimated_total
+                active_total_estimated += estimated_total
+                active_total_so_far += cost_so_far
 
             ws.append([
                 resource,
@@ -113,26 +110,24 @@ def generate_excel_report(response, previous_month_cost):
                 status
             ])
             row_cursor += 1
-        row_cursor += 1  # Blank line after each resource group
+        row_cursor += 1
 
     # Summary at the end
     ws.append([])
     ws.append(["Summary"])
-    ws.append(["Estimated Total Monthly Cost (active resources only):", round(active_total_so_far, 2), currency])
+    ws.append(["Total Cost So Far for Running Resources (active):", round(active_total_so_far, 2), currency])
+    ws.append(["Estimated Total Monthly Cost (active resources only):", round(active_total_estimated, 2), currency])
     ws.append(["Total Cost So Far for Deleted Resources:", round(deleted_total_so_far, 2), currency])
     ws.append([f"Total Cost of Previous Month ({prev_month_name}):", round(previous_month_cost, 2), currency])
 
-    # Auto-adjust column widths
     for col in ws.columns:
         max_length = 0
         col_letter = col[0].column_letter
         for cell in col:
             if cell.value:
                 max_length = max(max_length, len(str(cell.value)))
-        adjusted_width = max_length + 2
-        ws.column_dimensions[col_letter].width = adjusted_width
+        ws.column_dimensions[col_letter].width = max_length + 2
 
-    # Save with date range in filename
     filename = f"Azure_Cost_Report_{today.strftime('%B_%Y')}_from_{start_of_month.strftime('%d-%b-%Y')}_to_{today.strftime('%d-%b-%Y')}.xlsx"
     wb.save(filename)
     print(f"Excel report generated: {filename}")
@@ -184,7 +179,6 @@ query_prev_month = QueryDefinition(
 
 print(f"Fetching total cost for previous month: {prev_month_name}...")
 response_prev = cost_client.query.usage(scope=scope, parameters=query_prev_month)
-
 previous_month_cost = float(response_prev.rows[0][0]) if response_prev.rows else 0.0
 
 # Generate Excel report
