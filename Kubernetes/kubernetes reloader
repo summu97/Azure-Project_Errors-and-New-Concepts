@@ -1,0 +1,14 @@
+Kubernetes Reloader is an open-source tool (controller) that automatically reloads Kubernetes workloads (like Deployments, StatefulSets, DaemonSets) when ConfigMaps or Secrets they depend on are updated
+
+Why is it useful?
+- Normally, when you update a ConfigMap or Secret in Kubernetes, the changes do not automatically trigger a pod restart or reload of the application using those configs. This means the application might keep using the old configuration until you manually restart the pods.
+
+Kubernetes Reloader solves this by watching for changes to ConfigMaps and Secrets, and then:
+- Automatically triggering a rolling restart of the pods that reference those updated ConfigMaps or Secrets.
+- This ensures your applications pick up configuration changes immediately without manual intervention.
+
+How it works:
+- You deploy the Reloader controller in your cluster.
+- Annotate your Deployments/StatefulSets with specific annotations to tell Reloader which ConfigMaps or Secrets to watch.
+- When a ConfigMap or Secret changes, Reloader updates pod template annotations (usually with a timestamp), triggering Kubernetes to rollout a restart of the pods.
+
