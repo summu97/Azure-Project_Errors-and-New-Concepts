@@ -1,0 +1,4 @@
+When to use which?
+Use rm for non-sensitive files or general cleanup.
+
+Use shred for confidential or sensitive data (like passwords, private keys, logs), but only on traditional hard drives (HDD).
