@@ -1,0 +1,162 @@
+Useful: https://devopscube.com/configure-ssl-jenkins/#step-4-add-jks-to-jenkins-path
+
+Pre-requesites:
+Jenkins installed and port 8443 enables in NSG
+
+Setup process:
+Obtain SSL certificates
+Convert SSL keys to PKCS12 format
+Convert PKCS12 to JKS format
+Add JKS to Jenkins path
+Configure Jenkins startup to use the JKS file.
+Validate Jenkins SSL
+================================
+Obtain SSL certificates:
+
+Create OpenSSL config file (jenkins_cert.cnf):
+cat > jenkins_cert.cnf <<EOF
+[req]
+default_bits       = 2048
+prompt             = no
+default_md         = sha256
+req_extensions     = req_ext
+distinguished_name = dn
+
+[dn]
+C=IN
+ST=YourState
+L=YourCity
+O=YourOrg
+OU=IT
+CN=<common name>
+
+[req_ext]
+subjectAltName = @alt_names
+
+[alt_names]
+IP.1 = <jenkins_ip>
+DNS.1 = localhost
+EOF
+
+EX:
+sudo vim jenkins_cert.cnf
+
+
+[req]
+default_bits       = 2048
+prompt             = no
+default_md         = sha256
+req_extensions     = req_ext
+distinguished_name = dn
+
+[dn]
+C=IN
+ST=YourState
+L=YourCity
+O=YourOrg
+OU=IT
+CN=74.235.209.169
+
+[req_ext]
+subjectAltName = @alt_names
+
+[alt_names]
+IP.1 = 74.235.209.169
+
+---------------------
+Generate the certificate and private key:
+openssl req -x509 -nodes -days 365 \
+  -newkey rsa:2048 \
+  -keyout jenkins.key \
+  -out jenkins.crt \
+  -config jenkins_cert.cnf \
+  -extensions req_ext
+
+Output:
+jenkins.crt  
+jenkins.key
+---------------------
+Convert SSL keys to PKCS12 format:
+
+openssl pkcs12 -export \
+  -in jenkins.crt \
+  -inkey jenkins.key \
+  -out jenkins.p12 \
+  -name jenkins-ssl \
+  -CAfile jenkins.crt \
+  -caname root
+
+It will prompt for passwords and set it.
+Output:
+jenkins.p12
+
+---------------------
+Convert PKCS12 to JKS format:
+
+keytool -importkeystore \
+  -deststorepass <password> \
+  -destkeypass <password> \
+  -destkeystore jenkins.jks \
+  -srckeystore jenkins.p12 \
+  -srcstoretype PKCS12 \
+  -srcstorepass your_p12_password \
+  -alias jenkins-ssl
+
+EX:
+keytool -importkeystore \
+  -deststorepass jenkins123 \
+  -destkeypass jenkins123 \
+  -destkeystore jenkins.jks \
+  -srckeystore jenkins.p12 \
+  -srcstoretype PKCS12 \
+  -srcstorepass jenkins \
+  -alias jenkins-ssl
+
+-srcstorepass: password you set when creating jenkins.p12 (from openssl step)
+-deststorepass: password to protect the resulting .jks file
+-destkeypass: password to protect the private key inside the .jks keystore
+
+NOTE:
+deststorepass and -destkeypass must have same passwords
+
+Output:
+jenkins.jks
+
+ERROR:
+Command 'keytool' not found, but can be installed with:
+keytool is part of the Java Development Kit (JDK) or Java Runtime Environment (JRE)
+
+----------------------
+Add JKS to Jenkins path:
+sudo mkdir -p /etc/jenkins
+sudo cp jenkins.jks /etc/jenkins/
+sudo chown -R jenkins: /etc/jenkins
+sudo chmod 700 /etc/jenkins
+sudo chmod 600 /etc/jenkins/jenkins.jks
+---------------------------------------------------------------------------------------------------------------------
+sudo vim /usr/lib/systemd/system/jenkins.service
+
+Modify this:
+ExecStart=/usr/bin/Jenkins
+
+To:
+ExecStart=/usr/bin/java -Djava.awt.headless=true -jar /usr/share/java/jenkins.war --webroot=/var/cache/jenkins/war --httpPort=-1 --httpsPort=8443 --httpsKeyStore=/etc/jenkins/jenkins.jks --httpsKeyStorePassword=<-destkeypass> --httpsListenAddress=0.0.0.0
+
+EX:
+ExecStart=/usr/bin/java -Djava.awt.headless=true -jar /usr/share/java/jenkins.war --webroot=/var/cache/jenkins/war --httpPort=-1 --httpsPort=8443 --httpsKeyStore=/etc/jenkins/jenkins.jks --httpsKeyStorePassword=jenkins123 --httpsListenAddress=0.0.0.0
+
+sudo systemctl daemon-reexec
+sudo systemctl restart jenkins
+
+Validate SSL:
+https://<jenkins-dns/ip>:8443
+=============================================
+
+ADD generated certificate in cert-manager in your local
+---
+Export your "jenkins.crt" certificate file (in .crt or .cer format).
+Open Manage Computer Certificates (certmgr.msc).
+Navigate to Trusted Root Certification Authorities → Certificates.
+Right-click and select Import.
+Import your jenkins.crt file.
+Restart your browser and try accessing the site again.
