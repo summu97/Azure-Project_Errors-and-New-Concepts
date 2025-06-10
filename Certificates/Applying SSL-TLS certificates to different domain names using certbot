@@ -1,0 +1,67 @@
+To serve your two local applications (on ports 123 and 1234) via NGINX using your domain names and secure them using Certbot (Let's Encrypt), here’s the complete step-by-step guide:
+
+Your domain names are:
+app1.example.com → forwards to localhost:123
+app2.example.com → forwards to localhost:1234
+
+Step 1: Install Certbot and NGINX Plugin
+sudo apt update
+sudo apt install certbot python3-certbot-nginx
+
+
+Step 2: Configure NGINX for Both Apps
+Create separate config files for both domains: sudo vim /etc/nginx/sites-available/app1
+
+server {
+    listen 80;
+    server_name app1.example.com;
+
+    location / {
+        proxy_pass http://localhost:123;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+
+/etc/nginx/sites-available/app2
+
+server {
+    listen 80;
+    server_name app2.example.com;
+
+    location / {
+        proxy_pass http://localhost:1234;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+
+
+Enable the configurations:
+sudo ln -s /etc/nginx/sites-available/app1 /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/app2 /etc/nginx/sites-enabled/
+
+sudo nginx -t
+sudo systemctl reload nginx
+
+
+Step 3: Get SSL Certificates via Certbot
+sudo certbot --nginx -d app1.example.com -d app2.example.com
+
+This will:
+
+Automatically modify your NGINX config to add SSL blocks.
+
+Set up auto-renewal.
+
+
+
+Optional: Test Auto-Renewal
+sudo certbot renew --dry-run
+
+🔒 After Success
+NGINX will now listen on port 443 with valid SSL certificates, and:
+
+https://app1.example.com → will forward to localhost:123
+
+https://app2.example.com → will forward to localhost:1234
