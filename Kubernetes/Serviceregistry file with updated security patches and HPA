@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: serviceregistry
+  name: serviceregistry
+  namespace: codadev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serviceregistry
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: serviceregistry
+    spec:
+      hostPID: false
+      hostIPC: false
+      hostNetwork: false
+      automountServiceAccountToken: false
+      containers:
+      - image: codaregistry.azurecr.io/serviceregistry:ENVIRONMENT-BUILD_NUMBER
+        name: serviceregistryapp
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          privileged: false
+          capabilities:
+            drop: ["ALL"]
+        imagePullPolicy: Always
+        ports:
+          - containerPort: 8761
+        resources:
+          requests:
+            cpu: 10m
+            memory: 512Mi
+          limits:
+            cpu: 100m
+            memory: 1Gi
+        env:
+          - name: spring.profiles.active
+            value: dev
+          - name: env
+            value: dev            
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: serviceregistry-hpa
+  namespace: codadev
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: serviceregistry
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: serviceregistry
+  namespace: codadev
+  labels:
+    run: serviceregistry
+spec:
+  ports:
+  - port: 8761
+    protocol: TCP
+  selector:
+    app: serviceregistry
+  type: ClusterIP
