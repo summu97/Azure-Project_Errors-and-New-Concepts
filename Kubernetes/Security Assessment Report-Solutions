@@ -6,22 +6,22 @@ Your container is running with settings that allow it to gain more privileges th
 How to Fix It
 In Your Pod/Deployment YAML:
 securityContext:
-  allowPrivilegeEscalation: false
+  allowPrivilegeEscalation: false
 
 Example:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: secure-pod
+  name: secure-pod
 spec:
-  containers:
-    - name: app
-      image: my-app:latest
-      securityContext:
-        allowPrivilegeEscalation: false
-        runAsNonRoot: true
-        capabilities:
-          drop: ["ALL"]
+  containers:
+    - name: app
+      image: my-app:latest
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: ["ALL"]
 
 ---
 Containers sharing sensitive host namespaces should be avoided:
@@ -39,9 +39,9 @@ How to Fix It?
 1. Disable Host Namespace Sharing in YAML
 Update your Pod/Deployment definitions:
 spec:
-  hostPID: false
-  hostIPC: false
-  hostNetwork: false
+  hostPID: false
+  hostIPC: false
+  hostNetwork: false
 
 Better: remove those fields completely, as they default to false.
 
@@ -52,14 +52,16 @@ OPA/Gatekeeper example constraint:
 apiVersion: constraints.gatekeeper.sh/v1beta1
 kind: K8sPSPHostNamespace
 metadata:
-  name: disallow-host-namespaces
+  name: disallow-host-namespaces
 spec:
-  match:
-    kinds:
-      - apiGroups: [""]
-        kinds: ["Pod"]
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
 
 ---
+Immutable (read-only) root filesystem should be enforced for containers:
+
 What It Means
 By default, containers have a writable root filesystem, which means:
 Applications can write files anywhere inside the container (including /).
@@ -69,22 +71,24 @@ How to Enforce Read-Only Root Filesystem
 In Kubernetes Pod or Deployment YAML:
 
 spec:
-  containers:
-    - name: myapp
-      image: myimage:latest
-      securityContext:
-        readOnlyRootFilesystem: true
+  containers:
+    - name: myapp
+      image: myimage:latest
+      securityContext:
+        readOnlyRootFilesystem: true
 
 If your app needs to write to a location:
 Mount a writable volume (like an emptyDir or PVC):
 
-      volumeMounts:
-        - mountPath: /tmp
-          name: tmp-volume
-  volumes:
-    - name: tmp-volume
-      emptyDir: {}
+      volumeMounts:
+        - mountPath: /tmp
+          name: tmp-volume
+  volumes:
+    - name: tmp-volume
+      emptyDir: {}
 ---
+Kubernetes clusters should disable automounting API credentials:
+
 What Does It Mean?
 By default, in Kubernetes:
 
@@ -100,29 +104,29 @@ If a container does not need access to the Kubernetes API, explicitly disable th
 How to Disable Automounting
 At the Pod/Deployment Level:
 spec:
-  automountServiceAccountToken: false
+  automountServiceAccountToken: false
 
 Example:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: no-token-pod
+  name: no-token-pod
 spec:
-  automountServiceAccountToken: false
-  containers:
-    - name: app
-      image: myimage
+  automountServiceAccountToken: false
+  containers:
+    - name: app
+      image: myimage
 
 At the ServiceAccount Level (Recommended for Groups of Pods)
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: sa-no-token
+  name: sa-no-token
 automountServiceAccountToken: false
 
 Then attach this SA to your pods:
 spec:
-  serviceAccountName: sa-no-token
+  serviceAccountName: sa-no-token
 
 When Should You Disable It?
 | Pod Type                                      | Should You Disable? |
@@ -139,36 +143,36 @@ In a Pod/Deployment YAML:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: secure-pod
+  name: secure-pod
 spec:
-  containers:
-    - name: my-container
-      image: my-image:latest
-      securityContext:
-        capabilities:
-          drop: ["ALL"]
+  containers:
+    - name: my-container
+      image: my-image:latest
+      securityContext:
+        capabilities:
+          drop: ["ALL"]
 
 Or in a Deployment:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: secure-app
+  name: secure-app
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: secure-app
-  template:
-    metadata:
-      labels:
-        app: secure-app
-    spec:
-      containers:
-        - name: app
-          image: myimage:latest
-          securityContext:
-            capabilities:
-              drop: ["ALL"]
+  replicas: 1
+  selector:
+    matchLabels:
+      app: secure-app
+  template:
+    metadata:
+      labels:
+        app: secure-app
+    spec:
+      containers:
+        - name: app
+          image: myimage:latest
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
 
 ---
 Privileged containers should be avoided:
@@ -178,7 +182,7 @@ Simply do not set privileged: true. By default, containers run as non-privileged
 
 If you want to explicitly disable it in a pod spec:
 securityContext:
-  privileged: false
+  privileged: false
 
 2. Use Pod Security Admission (PSA) in Kubernetes
 Kubernetes now has built-in Pod Security Admission which enforces security standards including blocking privileged containers.
@@ -195,29 +199,29 @@ Example Gatekeeper Constraint (deny privileged containers):
 apiVersion: constraints.gatekeeper.sh/v1beta1
 kind: K8sPSPPrivilegedContainer
 metadata:
-  name: deny-privileged
+  name: deny-privileged
 spec:
-  enforcementAction: deny
+  enforcementAction: deny
 
 Or a Kyverno policy snippet:
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: disallow-privileged
+  name: disallow-privileged
 spec:
-  rules:
-  - name: check-privileged
-    match:
-      resources:
-        kinds:
-        - Pod
-    validate:
-      message: "Privileged containers are not allowed."
-      pattern:
-        spec:
-          containers:
-          - securityContext:
-              privileged: false
+  rules:
+  - name: check-privileged
+    match:
+      resources:
+        kinds:
+        - Pod
+    validate:
+      message: "Privileged containers are not allowed."
+      pattern:
+        spec:
+          containers:
+          - securityContext:
+              privileged: false
 
 | Method                   | Description                        |
 | ------------------------ | ---------------------------------- |
@@ -232,17 +236,17 @@ Running containers as root user should be avoided:
 Run as Non-Root User
 How to enforce non-root user in your Pod/Deployment YAML:
 spec:
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000   # UID of a non-root user inside container
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000   # UID of a non-root user inside container
 
 Or per container:
 containers:
 - name: app
-  image: myimage
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
+  image: myimage
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
 
 What if Your Image Only Has Root User?
 Use Dockerfile commands to create and switch to a non-root user:
@@ -256,4 +260,4 @@ How to Restrict Usage
 1. Audit and Remove hostNetwork: true in Pod Specs
 Make sure pod YAMLs do not set:
 hostNetwork: true
- 
+ 
