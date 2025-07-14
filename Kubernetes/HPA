@@ -1,0 +1,112 @@
+Horizontal Pod-Autoscaling:
+
+Pre-requisite:
+* Metric server
+
+NOTE: By default metric-server is deployed for AKS in built.
+
+Scenario 01: If you want to set HPA when deploying using deployment file.
+Sample Deployment file:
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: my-container
+        image: nginx:latest  # Replace with your own image
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "100Mi"
+          limits:
+            cpu: "1"
+            memory: "1500Mi"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+---
+Scenario 02: If you already have deployed your pods using deployment file
+
+Pre-requesites:
+* Make Sure Resource Requests/Limits Are Set
+---
+resources:
+  requests:
+    cpu: "100m"
+    memory: "100Mi"
+  limits:
+    cpu: "1"
+    memory: "1500Mi"
+
+use: kubectl edit deployment <your-deployment-name>
+---
+* Verify Metrics Server is Working
+use: kubectl top pods
+---
+Create an HPA Resource
+hpa.yaml
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: <your-deployment-name>
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+kubectl apply -f hpa.yaml
+---
+Watch the HPA in Action
+kubectl get hpa
+kubectl describe hpa <hpa-name>
+---
