@@ -1,0 +1,38 @@
+Step-by-Step Guide to Use SqlPackage on Linux:
+1. Install sqlpackage on Linux
+You cannot use SqlPackage.exe directly on Linux. Instead, you use the cross-platform sqlpackage binary.
+For Ubuntu/Debian:
+
+wget https://aka.ms/sqlpackage-linux -O sqlpackage.zip
+unzip sqlpackage.zip -d sqlpackage
+chmod +x sqlpackage/sqlpackage
+sudo mv sqlpackage/sqlpackage /usr/local/bin/sqlpackage
+
+2. Verify Installation
+sqlpackage -?
+
+3. Use sqlpackage Commands on Linux
+Export Schema + Data to .bacpac:
+sqlpackage /Action:Export \
+  /SourceServerName:<source_server> \
+  /SourceDatabaseName:<db_name> \
+  /TargetFile:<path>.bacpac \
+  /SourceUser:<username> \
+  /SourcePassword:<password>
+
+Export Schema Only to .dacpac:
+sqlpackage /Action:Extract \
+  /SourceServerName:<source_server> \
+  /SourceDatabaseName:<db_name> \
+  /TargetFile:<path>.dacpac \
+  /SourceUser:<username> \
+  /SourcePassword:<password>
+
+Deploy .dacpac to a Target DB:
+sqlpackage /Action:Publish \
+  /SourceFile:<path>.dacpac \
+  /TargetServerName:<target_server> \
+  /TargetDatabaseName:<new_db_name> \
+  /TargetUser:<username> \
+  /TargetPassword:<password>
+ 
