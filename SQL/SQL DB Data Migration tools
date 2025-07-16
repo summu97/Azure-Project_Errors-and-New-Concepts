@@ -1,0 +1,50 @@
+| Method                | What it Does                    | Best For                       |
+| --------------------- | ------------------------------- | ------------------------------ |
+| SSMS Generate Scripts | GUI-based schema-only migration | Manual use                     |
+| DACPAC                | Full schema in a portable file  | DevOps/pipelines               |
+| SqlPackage CLI        | Automation in CI/CD             | Large scale environments       |
+
+✅ Option 1: Generate Scripts for Schema Only in SSMS
+(This is the most common and GUI-friendly method)
+
+Steps:
+Open SSMS and connect to the source database.
+
+Right-click the database → Tasks → Generate Scripts.
+In the Generate Scripts wizard:
+- Click Next on the intro screen.
+- Choose "Select specific database objects" if you want only specific tables/stored procs/etc.
+- Otherwise, choose "Script entire database and all database objects".
+Click Next, then in "Set Scripting Options":
+- Choose where to save the script (file, clipboard, new query window).
+- Click "Advanced".
+In Advanced Scripting Options, set:
+- Types of data to script → Schema only ✅
+- (Optional: Check other options like target SQL version, indexes, triggers etc.)
+Click Next → Next → Finish.
+Now run that script on the destination server to create only the schema (tables, views, stored procedures, etc.) without any data.
+---
+✅ Option 2: Use DACPAC Export/Import (Schema Only)
+This method is good for automated pipelines or bulk deployments.
+
+🔧 Steps:
+In SSMS:
+- Right-click the source DB → Tasks → Extract Data-tier Application (DACPAC).
+- Follow the wizard to export the schema to a .dacpac file.
+On the destination server:
+- Right-click Databases → Deploy Data-tier Application.
+- Select the .dacpac and deploy.
+
+✅ DACPAC contains only schema, not data.
+---
+✅ Option 3: Use SQLPackage CLI (Automated)
+SqlPackage.exe /Action:Export /SourceServerName:<source_server> /SourceDatabaseName:<db_name> /TargetFile:<path>.bacpac
+
+But use this only if you want both schema and data. 
+For schema-only:
+SqlPackage.exe /Action:Extract /SourceServerName:<source_server> /SourceDatabaseName:<db_name> /TargetFile:<path>.dacpac
+
+Then deploy it using:
+SqlPackage.exe /Action:Publish /SourceFile:<path>.dacpac /TargetServerName:<target_server> /TargetDatabaseName:<new_db_name>
+
+ 
