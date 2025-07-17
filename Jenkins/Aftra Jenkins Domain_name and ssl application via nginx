@@ -1,0 +1,53 @@
+nginx installation:
+sudo apt update
+sudo apt install nginx -y
+sudo systemctl start nginx
+sudo systemctl enable nginx
+sudo systemctl status nginx
+
+Step-by-Step: Configure Nginx with SSL Certificates
+1. Move Files to a Secure Directory
+sudo mkdir -p /etc/nginx/ssl
+sudo cp 44b2a9897fb1c2fd.pem /etc/nginx/ssl/jenkins.crt
+sudo cp 44b2a9897fb1c2fd /etc/nginx/ssl/jenkins.key
+sudo cp gd_bundle-g2-g1 /etc/nginx/ssl/ca_bundle.crt
+
+sudo chmod 600 /etc/nginx/ssl/jenkins.key
+
+2. Configure Nginx for HTTPS
+sudo vim /etc/nginx/sites-available/jenkins
+
+server {
+    listen 80;
+    server_name jenkins.afmsagaftrafund.org;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name jenkins.afmsagaftrafund.org;
+
+    ssl_certificate /etc/nginx/ssl/jenkins.crt;
+    ssl_certificate_key /etc/nginx/ssl/jenkins.key;
+    ssl_trusted_certificate /etc/nginx/ssl/ca_bundle.crt;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://172.208.97.243:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+
+3. Enable the Site and Restart Nginx
+sudo ln -s /etc/nginx/sites-available/jenkins /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+
+4. try to access application via
+https://jenkins.afmsagaftrafund.org
