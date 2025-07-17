@@ -1,0 +1,78 @@
+WAF vs Firewall — What’s the Difference?
+| Feature              | **WAF (Web Application Firewall)**                                                          | **Traditional Firewall / NSG / Azure Firewall**             |
+| -------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **Layer**            | **Layer 7** (Application Layer: HTTP/HTTPS)                                                 | **Layer 3/4** (Network & Transport: IP, Port, Protocol)     |
+| **Purpose**          | Protects **web apps** from **web-specific threats** (e.g., SQL injection, XSS, bad headers) | Controls **network traffic** (who can access which IP/port) |
+| **Understands HTTP** | ✅ Yes – It can inspect URLs, cookies, headers, etc.                                         | ❌ No – It only sees IPs and ports                           |
+| **Example Use Case** | Block a malicious POST request with a harmful payload                                       | Block SSH access from all IPs except one                    |
+
+So what does WAF do beyond a firewall?
+WAF does more than just restrict access — it analyzes the content of the HTTP request:
+
+Detects if the request is trying to attack your app
+
+Can block things like:
+Malformed JSON
+Suspicious user-agents
+Bots scraping your website
+SQL or JavaScript injected in a form
+
+🧠 Think of it like this:
+🔐 Azure Firewall / NSG: “Who is allowed to talk to my server?”
+🛡️ WAF: “What are they saying in the request — and is it dangerous?”
+
+
+----------------------------------
+✅ Option 1: Both Applications Use Private IPs (Internal Communication via VNet Peering or VPN)
+🔹Use Case:
+Both apps are hosted inside private networks (e.g., Azure VNets or hybrid on-prem).
+The APIs are not exposed to the internet — only internal/private IPs.
+
+🔹Solution:
+Use VNet Peering or Site-to-Site VPN (if across different regions/orgs/clouds).
+Allow only the required source IP/subnet in Network Security Groups (NSGs).
+Example NSG Rule:
+
+Allow: Source IP → Destination: Your API's private IP → Port: 443 (HTTPS)
+Deny: Everything else (zero trust)
+
+🔹Benefits:
+Secure, private communication.
+No exposure to the public internet.
+Easier to monitor and control.
+
+✅ Option 2: Remote App Uses Public IP → Redirect to Internal API (with Firewall Rule)
+🔹Use Case:
+The calling application is external and accesses APIs using public IP.
+Your app is hosted internally on private IP.
+You want to expose it selectively to that external app.
+
+🔹Solution:
+Use Azure Firewall / NAT Gateway / Load Balancer to map:
+Public IP → Internal IP
+
+Example: Requests to FirewallPublicIP:443 get forwarded to 10.0.1.4:443
+
+Add firewall rules to allow:
+Only source IP of external app
+On specific port
+Optional: Add TLS mutual authentication or API keys
+
+🔹Benefits:
+Only whitelisted external app can access your internal API.
+No need to expose full private subnet.
+Traffic logging and control via firewall.
+
+✅ Bonus Option 3: Use Azure Application Gateway + WAF (for HTTP/S APIs)
+If the API is HTTP/HTTPS:
+Use Azure Application Gateway with WAF as the entry point.
+
+It can perform:
+SSL termination
+Request routing
+Load balancing
+Web firewall protection
+
+🔐 Security Note:
+Always use HTTPS and JWT/API Key/Auth Header for API requests.
+Monitor with Azure Monitor, NSG Flow Logs, or Application Insights.
