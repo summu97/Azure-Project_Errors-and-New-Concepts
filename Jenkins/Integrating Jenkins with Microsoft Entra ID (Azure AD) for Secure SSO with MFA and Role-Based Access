@@ -1,0 +1,188 @@
+Objective:
+* User visits https://jenkins.ui.com
+* Redirected to Microsoft Entra ID login
+* Enforced MFA
+* Only authorized users are allowed to access Jenkins
+
+STEP-BY-STEP CONFIGURATION
+
+STEP 1: Register Jenkins in Microsoft Entra ID (Azure AD)
+Go to: Microsoft Entra ID > App registrations > New registration
+Fill:
+Name: Jenkins-SSO
+Supported account types: Single tenant
+Redirect URI (Web):
+https://jenkins.ui.com/securityRealm/finishLogin
+
+Click Register
+---
+Save the following:
+Application (client) ID
+Directory (tenant) ID
+Go to: Certificates & Secrets > New client secret
+- Add a description, choose expiration, and click Add
+- Save the Client Secret Value
+
+STEP 2: Assign Users or Create Group (Access Control)
+
+Option A: Assign users directly
+Go to: Enterprise Applications > Jenkins-SSO > Users and Groups
+Click Add user/group → Select only the users who should access Jenkins
+
+Option B: Create a Security Group in Microsoft Entra ID (recommended)
+Navigate to:
+Microsoft Entra ID > Groups > + New group
+Fill the form:
+Group type: Security
+Group name: jenkins-users
+Group description: "Users allowed to access Jenkins"
+Membership type: Assigned
+Click Create
+
+Add Users to the Group
+Go to:
+Microsoft Entra ID > Groups > jenkins-users
+Click Members > + Add members
+Search and select the specific users you want to give access to Jenkins
+Click Select to confirm
+✅ Now only those users are in the jenkins-users group.
+
+Assign Group to the Jenkins App Registration(This part ties the group to the Enterprise Application (not the App Registration))
+Go to:
+Microsoft Entra ID > Enterprise Applications
+Find and click your Jenkins app (e.g., Jenkins-SSO)
+Go to: Users and groups > + Add user/group
+Click:
+Users and groups → select the group jenkins-users
+Click Select
+Click Assign
+✅ Now, only users in jenkins-users group have access to Jenkins SSO.
+
+--------------------
+Optional: Add Group Claims to JWT Token
+[
+🔐 Why Add Group Claims to the Token?
+When a user logs into Jenkins via Azure AD SSO, Jenkins gets a JWT token (ID token).
+To control permissions inside Jenkins (RBAC) based on Azure groups, Jenkins needs to know:
+"Which Azure AD groups does this user belong to?"
+
+But by default, group information is not in the token. You must explicitly tell Azure to include it.
+]
+How to Add Group Claims
+Go to:
+Microsoft Entra ID → App registrations → Jenkins-SSO → Token configuration
+Click "+ Add Group Claim"
+Choose:
+"Groups assigned to the application" (only the groups assigned to Jenkins app, e.g., jenkins-users)
+Format: Group ID or Display Name (based on what Jenkins uses to match)
+Click Add
+
+✅ Result
+Now, when a user logs into Jenkins:
+The token will include group info
+Jenkins can read that group from the token
+You can use that to assign Jenkins roles like admin, developer, viewer, etc.
+--------------------
+
+STEP 3: Configure MFA (Optional but Recommended)
+Go to Microsoft Entra ID > Security > Conditional Access
+Create a new policy:
+- Users: Select the Jenkins users/group
+- Cloud apps: Select your Jenkins-SSO app
+- Access Controls: Require Multi-factor authentication
+Enable the policy
+
+STEP 4: Install Plugin in Jenkins
+Log into Jenkins (initial admin setup)
+Go to: Manage Jenkins > Plugins
+Install: OpenID Connect Authentication Plugin
+
+STEP 5: Configure Jenkins OIDC (Azure SSO)
+Go to: Manage Jenkins > Configure Global Security
+Choose: OpenID Connect
+
+Fill the following:
+| Field              | Value                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| Client ID          | From App Registration                                                                 |
+| Client Secret      | From Azure Client Secret                                                              |
+| Issuer             | `https://login.microsoftonline.com/<TENANT_ID>/v2.0`                                  |
+| Discovery Endpoint | `https://login.microsoftonline.com/<TENANT_ID>/v2.0/.well-known/openid-configuration` |
+| Scopes             | `openid email profile`                                                                |
+| Email Domains      | `yourdomain.com` *(Optional)*                                                         |
+| Redirect URI       | `https://jenkins.ui.com/securityRealm/finishLogin`                                    |
+
+
+STEP 6: Restrict Jenkins Access to Only Logged-In Azure Users
+Install Role Strategy Plugin
+Go to Manage Jenkins > Configure Global Security
+- Set Authorization to Role-Based Strategy
+Go to Manage Jenkins > Manage and Assign Roles > Assign Roles
+Assign:
+- Global roles (admin, developer, etc.) to Azure usernames or group names
+
+NOTE: Users not assigned a role will not be able to use Jenkins even if they log in.
+
+
+Final Test
+Go to: https://jenkins.ui.com
+Should redirect to Microsoft login
+Login with allowed user
+MFA is enforced (if policy is active)
+User logs into Jenkins with correct role
+========================================================================
+Assign Jenkins roles based on your Azure Entra ID groups like admin and user.
+
+Goal:
+Admin group in Entra ID → Full Jenkins permissions (Admin role)
+User group in Entra ID → View-only permissions (User role)
+
+Step 1: Enable Group Claims in Azure Entra ID App Registration
+Go to Azure Portal → Microsoft Entra ID → App registrations → Your Jenkins app
+Select Token configuration (if not visible, add it)
+Click Add optional claim →
+Choose Token type: ID token
+Select groups
+Save
+This makes Azure AD include the user’s group memberships as claims in the ID token Jenkins receives.
+
+Step 2: Get Group Object IDs
+In Azure Entra ID, go to Groups
+Find your Admin and User groups
+Copy their Object IDs (GUIDs) — you’ll need these for Jenkins config
+
+Step 3: Configure Jenkins OIDC Plugin to Read Groups
+Go to Manage Jenkins → Configure Global Security
+Under OpenID Connect (OIDC) settings:
+Make sure Scopes include openid email profile groups
+Your discovery endpoint should remain:
+https://login.microsoftonline.com/<TENANT_ID>/v2.0/.well-known/openid-configuration
+Save
+
+Step 4: Install Role Strategy Plugin
+If not already installed:
+Go to Manage Jenkins → Plugin Manager → Available
+Search for Role-based Authorization Strategy and install
+Restart Jenkins if required
+
+Step 5: Define Roles in Jenkins
+Go to Manage Jenkins → Manage and Assign Roles → Manage Roles
+Add two roles:
+admin → check all permissions (full access)
+user → check only Overall: Read, Job: Read, View: Read (view-only)
+
+Step 6: Map Azure Groups to Jenkins Roles
+Go to Manage Jenkins → Manage and Assign Roles → Assign Roles
+Under Group-based roles (this tab appears after plugin install):
+Add new group: paste the Azure AD group Object ID for Admin group and assign role admin
+Add new group: paste the Object ID for User group and assign role user
+
+How It Works:
+When a user logs in, Jenkins receives the groups claim (which is a list of Object IDs) in the token.
+Jenkins checks if the user’s groups match any of those assigned under Group-based roles.
+If yes, Jenkins grants the permissions defined by the corresponding role.
+
+Notes:
+You must use the Azure AD Group Object IDs (not group names) in Jenkins.
+Users not in these groups get no roles (limited/no access).
+You can customize roles and permissions further as needed.
