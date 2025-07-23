@@ -83,8 +83,27 @@ The token will include group info
 Jenkins can read that group from the token
 You can use that to assign Jenkins roles like admin, developer, viewer, etc.
 --------------------
+STEP 3: Add Optional Claims to ID Token
+By default, Azure AD doesn’t include the email claim in the ID token unless you explicitly ask for it.
 
-STEP 3: Configure MFA (Optional but Recommended)
+Do this in Microsoft Entra:
+Go to Microsoft Entra Admin Center
+→ App registrations
+→ Click your app
+→ Go to Token Configuration
+
+Click “+ Add optional claim”
+Choose:
+Token type: ID
+Claims to add:
+email ✅
+preferred_username ✅
+given_name ✅
+
+Check the box: ✅ “Add the corresponding Microsoft Graph permission” (if prompted)
+Click Add
+
+STEP 4: Configure MFA (Optional but Recommended)
 Go to Microsoft Entra ID > Security > Conditional Access
 Create a new policy:
 - Users: Select the Jenkins users/group
@@ -92,28 +111,36 @@ Create a new policy:
 - Access Controls: Require Multi-factor authentication
 Enable the policy
 
-STEP 4: Install Plugin in Jenkins
+STEP 5: Install Plugin in Jenkins
 Log into Jenkins (initial admin setup)
 Go to: Manage Jenkins > Plugins
 Install: OpenID Connect Authentication Plugin
 
-STEP 5: Configure Jenkins OIDC (Azure SSO)
+STEP 6: Configure Jenkins OIDC (Azure SSO)
 Go to: Manage Jenkins > Configure Global Security
 Choose: OpenID Connect
 
 Fill the following:
-| Field              | Value                                                                                 |
-| ------------------ | ------------------------------------------------------------------------------------- |
-| Client ID          | From App Registration                                                                 |
-| Client Secret      | From Azure Client Secret                                                              |
-| Issuer             | `https://login.microsoftonline.com/<TENANT_ID>/v2.0`                                  |
-| Discovery Endpoint | `https://login.microsoftonline.com/<TENANT_ID>/v2.0/.well-known/openid-configuration` |
-| Scopes             | `openid email profile`                                                                |
-| Email Domains      | `yourdomain.com` *(Optional)*                                                         |
-| Redirect URI       | `https://jenkins.ui.com/securityRealm/finishLogin`                                    |
+## ✅ **Correct Jenkins OpenID Settings (Final Version)**
 
+| Field                           | Value                                                                                                          |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Client ID**                   | `15af1a78-e36e-4f51-8860-bca8c8c02e4a`                                                                         |
+| **Client Secret**               | (Paste from Azure secret value)                                                                                |
+| **Configuration Mode**          | Manual                                                                                                         |
+| **Issuer**                      | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/v2.0`                                  |
+| **Authorization server URL**    | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/authorize`                 |
+| **Token server URL**            | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/token`                     |
+| **UserInfo server URL**         | `https://graph.microsoft.com/oidc/userinfo` ✅ **(Add this!)**                                                  |
+| **JWKS server URL**             | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/discovery/v2.0/keys` ✅ **(Add this!)** |
+| **End Session URL**             | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/logout`                    |
+| **Scopes**                      | `openid email profile` ✅                                                                                       |
+| **Token Authentication Method** | `Post` is safer                                                                                                |
+| **Enable Token Refresh**        | Optional (check only if using long sessions)                                                                   |
+| **Enable Token Refresh**        | Optional (check only if using long sessions)                                                                   |
+| **Advanced configurations**     | User fields >> User name field name >> 'preferred_username'
 
-STEP 6: Restrict Jenkins Access to Only Logged-In Azure Users
+STEP 7: Restrict Jenkins Access to Only Logged-In Azure Users
 Install Role Strategy Plugin
 Go to Manage Jenkins > Configure Global Security
 - Set Authorization to Role-Based Strategy
