@@ -1,0 +1,214 @@
+@Library('shared-lib') _  // Your shared library with notifyTeam.groovy
+
+pipeline {
+    agent any
+
+    tools {
+        gradle 'Gradle'
+    }
+
+    options {
+        buildDiscarder(logRotator(daysToKeepStr: '60'))
+    }
+
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['Dev', 'QA', 'UAT'],
+            description: 'Select the target environment'
+        )
+
+        choice(
+            name: 'SERVICE_NAME',
+            choices: [
+                'cacheservice',
+                'cloudgateway',
+                'documentmanagementservice',
+                'fileingestionservice',
+                'internationservice',
+                'mailservice',
+                'netsuiteintegrationservices',
+                'participantservice',
+                'playlistandtitlemanagement',
+                'searchservice',
+                'securityservice',
+                'serviceregistry'
+            ],
+            description: 'Select the backend service to deploy'
+        )
+    }
+
+    environment {
+        USERNAME = credentials('ACRUSERNAME')
+        PASSWD = credentials('ACRPASSWD')
+        RESOURCE_GROUP = 'CODA_RG'
+    }
+
+    stages {
+
+        stage('Init') {
+            steps {
+                script {
+                    def selectedEnv = params.ENVIRONMENT
+                    def svc = params.SERVICE_NAME
+
+                    echo "Initializing pipeline for service '${svc}' in '${selectedEnv}' environment..."
+
+                    branchMap = [
+                        Dev: 'DEV',
+                        QA: 'QA',
+                        UAT: 'release/UAT'
+                    ]
+
+                    yamlMap = [
+                        Dev: "${svc}-dev-deployment.yml",
+                        QA: "${svc}-qa-deployment.yml",
+                        UAT: "${svc}-uat-deployment.yml"
+                    ]
+
+                    clusterMap = [
+                        Dev: 'DevFundCluster',
+                        QA: 'DevFundCluster',
+                        UAT: 'CODAUATCluster'
+                    ]
+
+                    currentBranch = branchMap[selectedEnv]
+                    currentYaml = yamlMap[selectedEnv]
+                    currentCluster = clusterMap[selectedEnv]
+                    imageTag = "${svc}-${selectedEnv}-${env.BUILD_NUMBER}"
+					
+					                    echo """
+                    ==============================================================
+                                 BACKEND CONFIG DETAILS:
+                    ------------------------------------------------------------
+                            ✅ Service Name     : ${svc}
+                            🌍 Environment      : ${selectedEnv}
+                            🌿 Git Branch       : ${currentBranch}
+                            ☸️ AKS Cluster      : ${currentCluster}
+                            📄 Deployment YAML  : ${currentYaml}
+                            🐳 Docker Image Tag : ${imageTag}
+                    ==============================================================
+                    """
+                }
+            }
+        }
+
+        stage('Checkout Code') {
+            steps {
+                cleanWs()
+                script {
+                    echo "Checking out source code..."
+                    git branch: branchMap[params.ENVIRONMENT],
+                        credentialsId: 'b8e7dce4-8ee0-4a83-b21f-a7f7ccfb20f2',
+                        url: "https://vbboya@bitbucket.org/asaiprdf/${params.SERVICE_NAME}.git"
+                }
+            }
+        }
+
+        stage('Build Service') {
+            steps {
+                script {
+                    sh "gradle wrapper"
+                    sh "sudo chmod 755 gradlew"
+                    sh "./gradlew clean build --no-daemon"
+                }
+            }
+        }
+        stage('Notify for Approval') {
+            when {
+                expression { params.ENVIRONMENT == 'QA' || params.ENVIRONMENT == 'UAT' }
+            }		
+            steps {
+                script {
+                    notifyTeam(
+                        env: params.ENVIRONMENT,
+                        serviceName: params.SERVICE_NAME,
+                        buildNumber: env.BUILD_NUMBER,
+                        buildUrl: env.BUILD_URL,
+                        type: 'approval'
+                    )
+
+                    def approvers = ['vbboya@afmsagaftrafund.org','dkgiddaluri@afmsagaftrafund.org']  
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input message: "🚦 Approve deployment of '${params.SERVICE_NAME}' to '${params.ENVIRONMENT}'?",
+                              ok: "Approve",
+                              submitter: approvers.join(',')
+                    }
+                }
+            }
+        }
+        stage('Dockerize') {
+            steps {
+                script {
+                    echo "Creating certificate folder and copying cert..."
+                    sh "mkdir -p \$WORKSPACE/certificate"
+                    sh "sudo cp /home/jenkinsadmin/certificate/certificate.crt \$WORKSPACE/certificate"
+
+                    echo "Building Docker image for '${params.SERVICE_NAME}'..."
+                    sh "sudo docker build --network=host -t codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag} ."
+
+                    echo "Logging into Azure Container Registry..."
+                    sh "echo \$PASSWD | docker login codaregistry.azurecr.io -u \$USERNAME --password-stdin"
+
+                    echo "Pushing Docker image to ACR: codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag}"
+                    sh "sudo docker push codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag}"
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                script {
+                      echo "Starting deployment to AKS cluster '${currentCluster}'..."
+
+                    echo "Authenticating to Azure using managed identity..."
+                    sh "az login --identity"
+
+                    echo "Fetching credentials for AKS cluster '${currentCluster}'..."
+                    sh "az aks get-credentials --name ${currentCluster} --resource-group ${RESOURCE_GROUP} --overwrite-existing"
+
+                    echo "Replacing image tag in deployment YAML..."
+                    sh "sed -i 's/ENVIRONMENT-BUILD_NUMBER/${imageTag}/' ${currentYaml}"
+
+                    echo "Applying Kubernetes deployment YAML: '${currentYaml}'"
+                    sh "kubectl apply -f ${currentYaml}"
+                }
+            }
+        }
+
+        stage('Notify Success') {
+            steps {
+                script {
+                    notifyTeam(
+                        env: params.ENVIRONMENT,
+                        serviceName: params.SERVICE_NAME,
+                        buildNumber: env.BUILD_NUMBER,
+                        buildUrl: env.BUILD_URL,
+                        type: 'success'
+                    )
+                }
+            }
+        }
+
+        stage('Clean Up') {
+            steps {
+                sh 'sudo docker system prune --all --volumes -f'
+                cleanWs()
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                notifyTeam(
+                    env: params.ENVIRONMENT,
+                    serviceName: params.SERVICE_NAME,
+                    buildNumber: env.BUILD_NUMBER,
+                    buildUrl: env.BUILD_URL,
+                    type: 'failure'
+                )
+            }
+        }
+    }
+}
