@@ -1,0 +1,2 @@
+library configuration in Jenkins:
+manage jenkins--global pipeline library--name--default version(branch from github)--scm--git--repo url--credebtials
