@@ -1,2 +1,6 @@
-library configuration in Jenkins:
+Step 01: save .groovey file in github
+
+Step 02: library configuration in Jenkins
 manage jenkins--global pipeline library--name--default version(branch from github)--scm--git--repo url--credebtials
+
+Step 03: use the library in jenkins
