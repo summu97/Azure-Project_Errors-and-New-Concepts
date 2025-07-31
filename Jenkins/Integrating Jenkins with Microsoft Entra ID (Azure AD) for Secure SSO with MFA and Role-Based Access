@@ -130,6 +130,7 @@ Fill the following:
 | **Configuration Mode**          | Manual                                                                                                         |
 | **Issuer**                      | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/v2.0`                                  |
 | **Authorization server URL**    | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/authorize`                 |
+(https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/authorize?prompt=login)
 | **Token server URL**            | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/token`                     |
 | **UserInfo server URL**         | `https://graph.microsoft.com/oidc/userinfo` ✅ **(Add this!)**                                                  |
 | **JWKS server URL**             | `https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/discovery/v2.0/keys` ✅ **(Add this!)** |
