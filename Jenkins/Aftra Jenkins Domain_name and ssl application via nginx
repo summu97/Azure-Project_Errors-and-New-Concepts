@@ -20,18 +20,36 @@ sudo vim /etc/nginx/sites-available/jenkins
 server {
     listen 80;
     server_name jenkins.afmsagaftrafund.org;
+
     # Redirect HTTP to HTTPS
     location / {
         return 301 https://$host$request_uri;
     }
 }
-server {
 
+server {
     listen 443 ssl;
     server_name jenkins.afmsagaftrafund.org;
+
     ssl_certificate /etc/nginx/ssl/jenkins.crt;
     ssl_certificate_key /etc/nginx/ssl/jenkins.key;
     ssl_trusted_certificate /etc/nginx/ssl/ca_bundle.crt;
+
+    # Logout handler: clear session and redirect to Azure logout
+    location = /logout {
+        # Clear Jenkins session cookie
+        add_header Set-Cookie "JSESSIONID=deleted; Path=/; Max-Age=0; HttpOnly; Secure";
+
+        # Redirect to Azure logout, then to /force-login
+        return 302 https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/logout?post_logout_redirect_uri=https%3A%2F%2Fjenkins.afmsagaftrafund.org%2Fforce-login;
+    }
+
+    # After Azure logout, force a new login with account selection
+    location = /force-login {
+        return 302 https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/authorize?domain_hint=afmsagaftrafund.org&state=00023b95-4b4c-47f6-b1df-6f916f68a720&nonce=MCNsC9gKiON0nkHW&prompt=select_account&response_mode=form_post&response_type=id_token&client_id=15af1a78-e36e-4f51-8860-bca8c8c02e4a&redirect_uri=https%3A%2F%2Fjenkins.afmsagaftrafund.org%2FsecurityRealm%2FfinishLogin&scope=openid%20profile%20email;
+    }
+
+    # Proxy all Jenkins traffic
     location / {
         proxy_pass http://10.0.1.11:8080;
         proxy_set_header Host $host;
@@ -45,6 +63,7 @@ server {
         proxy_set_header Connection "upgrade";
     }
 }
+
 
  
 
