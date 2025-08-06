@@ -1,1 +1,64 @@
-https://youtu.be/CDB-AjhTdFE?si=WoFOlrWrKguONwax
+Link: https://youtu.be/CDB-AjhTdFE?si=WoFOlrWrKguONwax
+
+🔁 Step 1: Register Grafana in Azure Entra ID
+Go to Azure Portal → Microsoft Entra ID → App registrations → Click New registration
+Name: Grafana
+Redirect URI:
+Type: Web
+url: https://monitoring.afmsagaftrafund.org/login/generic_oauth
+Click Register.
+
+🔑 Step 2: Create a Client Secret
+In the App registration, go to Certificates & Secrets.
+Click New client secret → Add a name and expiry.
+Copy and save the secret value.
+
+📋 Step 3: Note Required Values
+From the Azure App, you'll need:
+| Value           | Where to Find                                                         |
+| --------------- | --------------------------------------------------------------------- |
+| `client_id`     | App registration → Overview                                           |
+| `client_secret` | Certificates & Secrets                                                |
+| `tenant_id`     | Azure AD → Overview                                                   |
+| `auth_url`      | `https://login.microsoftonline.com/<tenant_id>/oauth2/v2.0/authorize` |
+| `token_url`     | `https://login.microsoftonline.com/<tenant_id>/oauth2/v2.0/token`     |
+
+ADD THESE
+--------------------------------
+4️⃣ Add a Redirect URI for Logout (optional)
+Go to Authentication → Add URI: https://<your-grafana-domain>/logout
+save
+
+5️⃣ Assign Users / Groups in Azure AD
+Go to Enterprise Applications → Your Grafana-SSO app.
+
+Under Users and groups, add all users/groups who should have Grafana access.
+
+6️⃣ Configure Grafana for Azure AD OAuth
+Edit your grafana.ini (location depends on installation method, usually /etc/grafana/grafana.ini):
+
+[server]
+root_url = https://<your-grafana-domain>
+
+[auth.generic_oauth]
+enabled = true
+name = Azure AD
+allow_sign_up = true
+client_id = <YOUR_CLIENT_ID>
+client_secret = <YOUR_CLIENT_SECRET>
+scopes = openid email profile
+auth_url = https://login.microsoftonline.com/<YOUR_TENANT_ID>/oauth2/v2.0/authorize
+token_url = https://login.microsoftonline.com/<YOUR_TENANT_ID>/oauth2/v2.0/token
+api_url = https://graph.microsoft.com/oidc/userinfo
+role_attribute_path = contains(groups[*], 'GrafanaAdmins') && 'Admin' || 'Viewer'
+
+Replace:
+<YOUR_CLIENT_ID> → Application (client) ID
+<YOUR_CLIENT_SECRET> → Client secret value
+<YOUR_TENANT_ID> → Directory (tenant) ID
+role_attribute_path → Adjust if you want role mapping via Azure AD groups.
+
+7️⃣ Restart Grafana
+sudo systemctl restart grafana-server
+
+--------------------------------
