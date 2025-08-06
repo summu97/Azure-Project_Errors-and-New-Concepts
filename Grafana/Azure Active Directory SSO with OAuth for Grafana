@@ -62,3 +62,209 @@ role_attribute_path → Adjust if you want role mapping via Azure AD groups.
 sudo systemctl restart grafana-server
 
 --------------------------------
+I see what’s happening — your Grafana login with Entra ID is working, but once you log in as an Azure AD (Entra) user, you don’t see the "Data Sources" and "Connections" tabs.
+That’s not an SSO problem — it’s a permissions / role issue in Grafana.
+Why This Happens
+In Grafana:
+Viewer role = can view dashboards, no access to configuration (including data sources).
+Editor role = can create dashboards but still cannot add data sources.
+Admin role = can configure everything (including data sources and connections).
+When you use Entra ID SSO, Grafana assigns roles based on:
+Default OAuth role settings
+role_attribute_path mapping in grafana.ini (if configured)
+Right now, your config says:
+role_attribute_path = contains(groups[*], 'GrafanaAdmins') && 'Admin' || 'Viewer'
+This means:
+Only users who are members of the Azure AD group GrafanaAdmins get Admin role.
+Everyone else is Viewer (so they won’t see Data Sources or Connections).
+How to Fix
+You have two options:
+Option 1 — Assign Your Azure AD User to the Admin Group
+In Azure Portal → Microsoft Entra ID → Groups:
+Create a group named GrafanaAdmins (exact name).
+Add your Azure AD user(s) to this group.
+In the Grafana App Registration → Token Configuration:
+Add a Group claim to be included in the ID token.
+Restart Grafana and log in again.
+Now, since your Entra user is in GrafanaAdmins, Grafana will assign Admin role automatically.
+Option 2 — Give All SSO Users Admin by Default (Not recommended for production)
+In grafana.ini:
+[auth.generic_oauth]
+...
+role_attribute_path = 'Admin'
+Or set:
+[users]
+auto_assign_org_role = Admin
+Then restart Grafana:
+sudo systemctl restart grafana-server
+This gives every SSO user full admin rights.
+Recommended for You
+Since you’re just setting this up, I’d suggest Option 1 — create a GrafanaAdmins Azure AD group and map it to the Admin role. That way you can control exactly who can configure datasources without opening it up to everyone.
+If you want, I can give you the exact Azure AD group claim configuration so Grafana gets group info in the token — without that, role_attribute_path won’t work.
+Do you want me to prepare that? That’s the missing link here.
+----------------------------------
+role_attribute_path = contains(groups[*], '<MONITORING_ADMINS_GROUP_ID>') && 'Admin' || 'Viewer'
+----------------------------------
+[auth]
+disable_login_form = true
+oauth_auto_login = true
+ 
+[auth.basic]
+enabled = false
+-----------------------------------
+Fetching credentials for grafana.ini using managed identity:
+Alright — here’s the **clear step‑by‑step implementation** to make Grafana use your VM’s **Managed Identity** to fetch Azure AD SSO credentials (`TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`) from **Azure Key Vault** at startup.
+
+---
+
+## **1️⃣ Prerequisites**
+
+* Grafana is installed on an Azure VM.
+* VM has **System-assigned Managed Identity** enabled.
+* Key Vault has the secrets:
+
+  * `TENANT_ID`
+  * `CLIENT_ID`
+  * `CLIENT_SECRET`
+* Managed Identity has **`get`** and **`list`** permissions for Key Vault secrets.
+
+---
+
+### **Step 1 — Give VM Managed Identity Key Vault Access**
+
+```bash
+# Get the VM's Managed Identity Object ID
+az vm show \
+  --resource-group <RG_NAME> \
+  --name <VM_NAME> \
+  --query identity.principalId \
+  --output tsv
+```
+
+Then assign Key Vault permissions:
+
+```bash
+az keyvault set-policy \
+  --name <YOUR_KEYVAULT_NAME> \
+  --object-id <VM_ManagedIdentity_ObjectID> \
+  --secret-permissions get list
+```
+
+---
+
+### **Step 2 — Test if VM Can Fetch Secrets**
+
+SSH into the VM:
+
+```bash
+ssh <vm-user>@<vm-ip>
+```
+
+Run:
+
+```bash
+TENANT_ID=$(az keyvault secret show --vault-name <YOUR_KEYVAULT_NAME> --name TENANT_ID --query value -o tsv --identity)
+CLIENT_ID=$(az keyvault secret show --vault-name <YOUR_KEYVAULT_NAME> --name CLIENT_ID --query value -o tsv --identity)
+CLIENT_SECRET=$(az keyvault secret show --vault-name <YOUR_KEYVAULT_NAME> --name CLIENT_SECRET --query value -o tsv --identity)
+
+echo "Tenant ID: $TENANT_ID"
+echo "Client ID: $CLIENT_ID"
+```
+
+If you see values, permissions are working ✅
+
+---
+
+### **Step 3 — Create a Script to Inject Secrets into Grafana**
+
+Create:
+
+```bash
+sudo nano /usr/local/bin/grafana-azuread-secrets.sh
+```
+
+Paste:
+
+```bash
+#!/bin/bash
+
+# Fetch secrets from Key Vault using Managed Identity
+TENANT_ID=$(az keyvault secret show --vault-name <YOUR_KEYVAULT_NAME> --name TENANT_ID --query value -o tsv --identity)
+CLIENT_ID=$(az keyvault secret show --vault-name <YOUR_KEYVAULT_NAME> --name CLIENT_ID --query value -o tsv --identity)
+CLIENT_SECRET=$(az keyvault secret show --vault-name <YOUR_KEYVAULT_NAME> --name CLIENT_SECRET --query value -o tsv --identity)
+
+# Export as environment variables for Grafana
+export GF_AUTH_AZUREAD_ENABLED=true
+export GF_AUTH_AZUREAD_ALLOW_SIGN_UP=true
+export GF_AUTH_AZUREAD_CLIENT_ID=$CLIENT_ID
+export GF_AUTH_AZUREAD_CLIENT_SECRET=$CLIENT_SECRET
+export GF_AUTH_AZUREAD_SCOPES="openid email profile"
+export GF_AUTH_AZUREAD_AUTH_URL="https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/authorize"
+export GF_AUTH_AZUREAD_TOKEN_URL="https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
+
+# Optional: Auto-login
+export GF_AUTH_DISABLE_LOGIN_FORM=true
+export GF_AUTH_OAUTH_AUTO_LOGIN=true
+
+# Start Grafana
+exec /usr/sbin/grafana-server --homepath=/usr/share/grafana --config=/etc/grafana/grafana.ini
+```
+
+Save & exit.
+
+---
+
+### **Step 4 — Make the Script Executable**
+
+```bash
+sudo chmod +x /usr/local/bin/grafana-azuread-secrets.sh
+```
+
+---
+
+### **Step 5 — Modify Grafana Systemd Service**
+
+Edit the service file:
+
+```bash
+sudo systemctl edit grafana-server
+```
+
+Paste:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/grafana-azuread-secrets.sh
+```
+
+---
+
+### **Step 6 — Reload & Restart Grafana**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart grafana-server
+```
+
+---
+
+### **Step 7 — Test**
+
+* Open an **Incognito browser** and go to your Grafana URL.
+* You should be **redirected to Microsoft Entra ID login** without needing to store secrets in `grafana.ini`.
+
+---
+
+This way:
+
+* Secrets stay in **Key Vault**.
+* Grafana VM uses **Managed Identity** to fetch them at startup.
+* No hardcoded credentials on the server.
+
+---
+
+If you want, I can **add logging** to the script so you can see in `journalctl` every time Grafana fetches secrets from Key Vault.
+Do you want me to include that logging version?
+
+ 
