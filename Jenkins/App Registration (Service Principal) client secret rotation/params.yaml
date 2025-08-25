@@ -1,0 +1,5 @@
+appregistrations:
+  - name: "jenkins-client-secret"
+    appId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  - name: "my-app-secret"
+    appId: "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
