@@ -1,0 +1,83 @@
+Got it 👍 — you want to be notified whenever developers create PRs in **Bitbucket** before merging. Here’s a **step-by-step guide** to configure it. I’ll cover **Bitbucket Cloud** (common) and mention Data Center where it differs.
+
+---
+
+## 🔹 Step 1: Enforce Pull Request Workflow
+
+1. Go to your repository → **Repository settings**.
+2. Under **Workflow → Branch permissions**, add rules:
+
+   * Protect `main`/`master` branch.
+   * Require **Pull Request** before merging.
+   * Optionally, enforce **minimum reviewers** (e.g., 1 or 2).
+     📖 [Docs: Branch permissions – Bitbucket Cloud](https://support.atlassian.com/bitbucket-cloud/docs/use-branch-permissions/)
+
+---
+
+## 🔹 Step 2: Add Default Reviewers
+
+1. Go to **Project settings → Default reviewers**.
+2. Add yourself (or your team) as a default reviewer.
+   ✅ Now, whenever someone creates a PR, you’ll automatically be added as a reviewer and get notified.
+   📖 [Docs: Default reviewers](https://support.atlassian.com/bitbucket-cloud/docs/add-default-reviewers-to-a-project/)
+
+---
+
+## 🔹 Step 3: Configure Merge Checks
+
+1. Go to **Repository settings → Merge checks**.
+2. Enable:
+
+   * ✅ Minimum number of reviewers must approve.
+   * ✅ All required builds must pass (if using Jenkins/GitHub Actions).
+     📖 [Docs: Require checks before merge](https://support.atlassian.com/bitbucket-cloud/docs/suggest-or-require-checks-before-a-merge/)
+
+---
+
+## 🔹 Step 4: Notifications
+
+You have options depending on how you want to receive PR alerts:
+
+### 📧 Email (default)
+
+* Bitbucket automatically emails reviewers when a PR is created or updated.
+
+### 💬 Slack/MS Teams
+
+* Go to **Repository settings → Slack → Settings**.
+* Connect your Slack workspace.
+* Enable notifications for:
+
+  * PR created
+  * PR commented
+  * PR approved/declined
+    📖 [Docs: Slack integration](https://support.atlassian.com/bitbucket-cloud/docs/integrate-bitbucket-cloud-with-slack/)
+
+### 🔗 Jenkins (for CI checks)
+
+* Install **[Bitbucket Branch Source Plugin](https://plugins.jenkins.io/cloudbees-bitbucket-branch-source/)** or **[Bitbucket Push and Pull Request Plugin](https://plugins.jenkins.io/bitbucket-push-and-pull-request/)** in Jenkins.
+* Create a **Multibranch Pipeline job** in Jenkins.
+* Jenkins will auto-detect PRs and run builds.
+* Configure build status to be sent back to Bitbucket, so PRs show ✅ / ❌ build results.
+  📖 [Plugin guide](https://github.com/jenkinsci/bitbucket-branch-source-plugin/blob/master/docs/USER_GUIDE.adoc)
+
+---
+
+## 🔹 Step 5: Test the Flow
+
+1. Developer raises a PR → You are auto-added as reviewer.
+2. You get **email / Slack notification** immediately.
+3. Jenkins runs PR pipeline → Updates PR with build status.
+4. Merge is only possible after approvals + passing build.
+
+---
+
+✅ This setup ensures:
+
+* No one merges directly to `main`.
+* You always get notified when a PR is raised.
+* Jenkins builds validate PRs before merging.
+
+---
+
+Do you want me to also give you a **Jenkinsfile snippet** that runs only on PR builds (so Jenkins validates PRs automatically)?
