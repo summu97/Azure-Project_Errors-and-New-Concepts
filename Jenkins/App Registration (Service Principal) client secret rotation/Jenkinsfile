@@ -1,0 +1,91 @@
+pipeline {
+    agent any
+
+    environment {
+        TEMP_FILE      = 'params.yaml'
+        KEY_VAULT_NAME = 'key-vault-adq'
+    }
+
+    stages {
+
+        stage('Azure Login with Managed Identity') {
+            steps {
+                script {
+                    echo '🔐 Logging in to Azure using VM Managed Identity...'
+                    sh 'az login --identity'
+                }
+            }
+        }
+
+        stage('Fetch Parameters File') {
+            steps {
+                git branch: 'main', url: 'https://github.com/summu97/Azure-JenkinsKeyRotationProject.git'
+                script {
+                    echo "📥 Downloaded parameter file"
+                    sh 'cat ${TEMP_FILE}'
+                }
+            }
+        }
+
+        stage('Fetch and Compare Client Secrets') {
+            steps {
+                script {
+                    def secrets = readYaml file: "${TEMP_FILE}"
+                    secrets.appregistrations.each { app ->
+                        def kvSecret = sh(
+                            script: "az keyvault secret show --name ${app.name} --vault-name ${KEY_VAULT_NAME} --query value -o tsv || echo ''",
+                            returnStdout: true
+                        ).trim()
+
+                        if (kvSecret) {
+                            echo "✅ Found KeyVault secret for ${app.name}. Proceeding with comparison."
+                            input message: "Do you want to rotate client secret for ${app.name}?", ok: "Yes, rotate"
+                        } else {
+                            echo "⚠️ No existing secret found in KeyVault for ${app.name}. Creating new one."
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Rotate Client Secrets') {
+            steps {
+                script {
+                    def secrets = readYaml file: "${TEMP_FILE}"
+                    secrets.appregistrations.each { app ->
+                        def newSecret = sh(
+                            script: """
+                                az ad app credential reset \
+                                --id ${app.appId} \
+                                --display-name "jenkins-rotation-$(date +%Y%m%d%H%M%S)" \
+                                --years 1 \
+                                --query password -o tsv
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        echo "🔁 Generated new client secret for App Registration: ${app.name}"
+
+                        // Store in KeyVault
+                        sh """
+                            az keyvault secret set \
+                            --vault-name ${KEY_VAULT_NAME} \
+                            --name ${app.name} \
+                            --value '${newSecret}'
+                        """
+                        echo "🔑 Updated KeyVault with new client secret for ${app.name}"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Client secret rotation completed successfully.'
+        }
+        failure {
+            echo '❌ Pipeline failed. Check logs.'
+        }
+    }
+}
