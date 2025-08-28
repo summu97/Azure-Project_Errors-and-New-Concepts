@@ -1,0 +1,68 @@
+Azure Key Vault doesn’t store raw PEM (.crt) files directly. Instead, it stores them in either:
+
+* Secrets → as base64-encoded strings (what you want if you just need to inject the file into the container)
+* Certificates → as PFX/PEM, but wrapped with metadata, not directly accessible as a flat file.
+
+For your use case (just needing to COPY the certificate file into the Docker image), the cleanest way is to store the .crt file contents as a Secret in Key Vault and then pull it during your Jenkins pipeline before building Docker.
+----------------------
+Steps to Implement:
+1. Store Certificate in Key Vault as a Secret
+
+Run this once from CLI:
+az keyvault secret set \
+  --vault-name <your-keyvault-name> \
+  --name my-certificate-crt \
+  --file /home/jenkinsadmin/certificate/certificate.crt
+
+This saves your .crt file as a Key Vault secret. (AKV will store it base64-encoded and return it as plain text when you fetch it).
+
+2. Update Your Shared Library (injectCertificate.groovy)
+Create a new helper in your shared lib:
+
+shared-lib/vars/injectCertificate.groovy
+
+def call(Map args) {
+    def vaultName = args.vaultName
+    def secretName = args.secretName
+    def outputPath = args.outputPath ?: "certificate/certificate.crt"
+
+    echo "🔐 Fetching certificate '${secretName}' from Key Vault '${vaultName}'..."
+
+    // Fetch secret value (base64 decoded automatically by CLI)
+    def certContent = sh(
+        script: "az keyvault secret show --vault-name ${vaultName} --name ${secretName} --query value -o tsv",
+        returnStdout: true
+    ).trim()
+
+    // Ensure target dir exists
+    sh "mkdir -p ${outputPath.substring(0, outputPath.lastIndexOf('/'))}"
+
+    // Write certificate file
+    writeFile file: outputPath, text: certContent
+
+    echo "✅ Certificate written to ${outputPath}"
+}
+
+
+3. Use in Jenkinsfile
+
+Replace your manual copy step in Dockerize stage:
+
+stage('Dockerize') {
+    steps {
+        script {
+            // Fetch certificate from AKV instead of copying from Jenkins home
+            injectCertificate(
+                vaultName: currentKeyVault,
+                secretName: "my-certificate-crt",
+                outputPath: "certificate/certificate.crt"
+            )
+
+            sh "sudo docker build --network=host -t codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag} ."
+            sh "echo $PASSWD | docker login codaregistry.azurecr.io -u $USERNAME --password-stdin"
+            sh "sudo docker push codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag}"
+        }
+    }
+}
+
+ 
