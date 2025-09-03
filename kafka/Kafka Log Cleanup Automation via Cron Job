@@ -1,0 +1,38 @@
+vi /usr/local/bin/cleanup-kafka-logs.sh
+---------------------------
+#!/bin/bash
+# cleanup-kafka-logs.sh
+# Deletes Kafka & Zookeeper log files older than 7 days
+ 
+# Directories (update if your setup differs)
+KAFKA_LOG_DIR="/opt/kafka/logs"
+ZOOKEEPER_LOG_DIR="/opt/kafka/bin/../logs"
+ 
+# Log file to track cleanup actions
+CLEANUP_LOG="/var/log/kafka_cleanup.log"
+ 
+# Function to clean logs
+cleanup_logs() {
+    local dir=$1
+    if [ -d "$dir" ]; then
+        echo "Cleaning logs in: $dir" | tee -a "$CLEANUP_LOG"
+        find "$dir" -type f -name "*.log*" -mtime +7 -print -delete >> "$CLEANUP_LOG" 2>&1
+    else
+        echo "Directory $dir not found, skipping..." | tee -a "$CLEANUP_LOG"
+    fi
+}
+ 
+# Run cleanup
+echo "==== Cleanup started at $(date) ====" >> "$CLEANUP_LOG"
+cleanup_logs "$KAFKA_LOG_DIR"
+cleanup_logs "$ZOOKEEPER_LOG_DIR"
+echo "==== Cleanup finished at $(date) ====" >> "$CLEANUP_LOG"
+echo "" >> "$CLEANUP_LOG"
+--------------------------
+
+chmod +x /usr/local/bin/cleanup-kafka-logs.sh
+sudo /usr/local/bin/cleanup-kafka-logs.sh
+--------------------------
+sudo crontab -e
+0 2 * * * /usr/local/bin/cleanup-kafka-logs.sh
+
