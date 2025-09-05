@@ -1,0 +1,9 @@
+https://github.com/cnescatlab/sonar-cnes-report/releases?utm_source=chatgpt.com
+
+Process:
+sudo wget https://github.com/cnescatlab/sonar-cnes-report/releases/download/5.0.1/sonar-cnes-report-5.0.1.jar
+sudo cp sonar-cnes-report-5.0.1.jar /opt/sonarqube/extensions/plugins/
+sudo chown sonarqube:sonarqube /opt/sonarqube/extensions/plugins/sonar-cnes-report-5.0.1.jar
+sudo chmod 755 sonar-cnes-report-5.0.1.jar
+sudo systemctl restart sonarqube
+sudo systemctl status sonarqube
