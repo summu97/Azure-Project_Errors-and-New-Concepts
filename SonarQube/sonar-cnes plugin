@@ -1,6 +1,8 @@
 https://github.com/cnescatlab/sonar-cnes-report/releases?utm_source=chatgpt.com
 
-Process:
+CNES * SonarQube version compatability: https://github.com/cnescatlab/sonar-cnes-report?utm_source=chatgpt.com
+
+Plugin installation process:
 sudo wget https://github.com/cnescatlab/sonar-cnes-report/releases/download/5.0.1/sonar-cnes-report-5.0.1.jar
 sudo cp sonar-cnes-report-5.0.1.jar /opt/sonarqube/extensions/plugins/
 sudo chown sonarqube:sonarqube /opt/sonarqube/extensions/plugins/sonar-cnes-report-5.0.1.jar
