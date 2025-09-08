@@ -1,0 +1,120 @@
+🔹 PromQL Queries for Alerts
+Kafka Down: namedprocess_namegroup_num_procs{groupname="kafka"} == 0
+
+Zookeeper Down: namedprocess_namegroup_num_procs{groupname="zookeeper"} == 0
+
+
+🔹 Grafana Alert Rule Example
+
+If you’re creating the alert directly in Grafana (recommended if you want Grafana notifications):
+Go to Alerting → Alert rules → New alert rule.
+Choose your Prometheus data source.
+Use the query: namedprocess_namegroup_num_procs{groupname="kafka"}
+
+Set condition:
+WHEN last() OF query (A)
+IS BELOW 1
+FOR 1m
+
+Add another rule for Zookeeper with the same setup but groupname="zookeeper".
+Add a Contact point (email, Teams, Slack, etc.) in Grafana alerting.
+==========================================================================
+Ah ✅ sounds like you’re on **Grafana 9/10** where the alert rule builder uses **Expressions** instead of the old “Condition” block. No problem — you can still achieve the same thing. Let me walk you through it step by step with the **Expressions flow**.
+---
+🔹 Step 1: Create an Incoming Webhook in Microsoft Teams
+
+Open your Teams app.
+Go to the channel where you want alerts.
+Click the "…" (More options) next to the channel → Connectors.
+Search for Incoming Webhook and add it.
+Give it a name (e.g., Grafana Alerts) and upload an icon if you want.
+Copy the Webhook URL (looks like https://outlook.office.com/webhook/...).
+👉 Save this — we’ll need it in Grafana.
+
+🔹 Step 2: Configure Grafana Contact Point (Teams)
+
+In Grafana, go to Alerting → Contact points → New contact point.
+Name it: Teams-Alerts.
+In the Integration dropdown, select Webhook.
+Paste the Teams Webhook URL you copied.
+Under Optional Settings, enable Send full alert payload → this gives detailed info.
+Save.
+---
+
+## 🔹 Step 1: Create a New Alert Rule
+
+1. Go to **Alerting → Alert rules → New alert rule**.
+2. Give it a name like `Kafka Down Alert`.
+3. Choose your **Prometheus data source**.
+
+---
+
+## 🔹 Step 2: Add Query (Expression A)
+
+* In the **Queries & expressions** section:
+
+  * Add a **Query A**
+  * Paste this PromQL:
+
+  ```promql
+  namedprocess_namegroup_num_procs{groupname="kafka"}
+  ```
+
+This will return `1` when Kafka is running, `0` when down.
+
+---
+
+---
+
+## 🔹 Step 4: Add Expression (Threshold C)
+
+* Click **Add expression → Threshold**.
+* Input: `A` (the reduced value).
+* Set condition: **IS BELOW 1**.
+* This means: if process count < 1 → alert.
+
+---
+
+## 🔹 Step 5: Alert Details
+
+* In the **Alert rule** panel:
+
+  * Set `for = 1m` (so it waits 1 minute before firing).
+  * Severity: `critical`.
+  * Add **annotations** for Teams message:
+
+    * Summary: `Kafka process is DOWN`
+    * Description: `Kafka not detected on {{ $labels.instance }} for more than 1 minute.`
+
+---
+
+## 🔹 Step 6: Connect to Teams
+
+* Under **Notifications**, select your **Teams-Alerts contact point** (webhook you created earlier).
+
+---
+
+## 🔹 Step 7: Repeat for Zookeeper
+
+* Same flow, but use query:
+
+  ```promql
+  namedprocess_namegroup_num_procs{groupname="zookeeper"}
+  ```
+
+---
+
+### 🔹 How it Works in This Flow
+
+* **A (Query)**: Fetch process count from Prometheus.
+* **B (Reduce)**: Collapse the metric into one value (`last`).
+* **C (Threshold)**: Compare value to `< 1`.
+* If true for 1m → Grafana fires the alert → sends JSON payload to Teams.
+
+---
+
+✅ So you **don’t need the old “Condition”** option. The **Expressions** block does the same logic in Grafana 9/10.
+
+---
+
+Do you want me to also give you the **exact JSON payload format** Grafana will send to Teams (so you know how the message will look and what fields are available)?
