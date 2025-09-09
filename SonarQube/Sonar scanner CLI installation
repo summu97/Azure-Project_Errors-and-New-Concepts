@@ -1,0 +1,22 @@
+NOTE: useful when you're scanning UI code
+
+Step 1: Install SonarScanner CLI on your server
+
+Download the latest SonarScanner CLI:
+cd /opt
+sudo wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+sudo unzip sonar-scanner-cli-5.0.1.3006-linux.zip
+sudo mv sonar-scanner-5.0.1.3006-linux sonar-scanner
+sudo rm sonar-scanner-cli-5.0.1.3006-linux.zip
+
+Add sonar-scanner to PATH:
+echo 'export PATH=$PATH:/opt/sonar-scanner/bin' | sudo tee /etc/profile.d/sonar-scanner.sh
+source /etc/profile.d/sonar-scanner.sh
+
+
+Verify installation:
+sonar-scanner -v
+
+OP:
+SonarScanner 5.0.1.3006
+Java 17
