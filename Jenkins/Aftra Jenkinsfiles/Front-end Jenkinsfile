@@ -93,17 +93,17 @@ pipeline {
                         url: 'git@bitbucket.org:asaiprdf/codaui.git'
 
                     echo """
-    ================================================================================
-          🚀 BUILD STAGE DETAILS 🚀
-    --------------------------------------------------------------------------------
-        📂 Environment        : ${params.ENVIRONMENT}
-        🌿 Branch Checked Out : ${currentBranch}
-        🛠️  Build Command      : ${currentBuildCmd}
-        📄 Deployment YAML    : ${currentYaml}
-        ☸️  AKS Cluster        : ${currentCluster}
-        🐳 Dockerfile         : ${currentDockerfile}
-        🏷️  Docker Image Tag   : codaregistry.azurecr.io/codaui:${imageTag}
-    ================================================================================
+		================================================================================
+					🚀 BUILD STAGE DETAILS 🚀
+		--------------------------------------------------------------------------------
+				📂 Environment        : ${params.ENVIRONMENT}
+				🌿 Branch Checked Out : ${currentBranch}
+				🛠️  Build Command      : ${currentBuildCmd}
+				📄 Deployment YAML    : ${currentYaml}
+				☸️  AKS Cluster        : ${currentCluster}
+				🐳 Dockerfile         : ${currentDockerfile}
+				🏷️  Docker Image Tag   : codaregistry.azurecr.io/codaui:${imageTag}
+		================================================================================
                     """
                 }
             }
@@ -130,12 +130,35 @@ pipeline {
             }
         }
 
+        stage("SonarQube Scan") {
+            steps {
+                withSonarQubeEnv('Sonarqube') {
+                    withCredentials([string(credentialsId: 'SONAR', variable: 'SONAR')]) {
+                        sh '''
+                            echo "📊 Running SonarQube scan for React UI..."
+                            # Run tests with coverage (ignore failure so scan still runs)
+                            npm run test -- --coverage --watchAll=false || true
+                            # Run sonar-scanner
+                            /opt/sonar-scanner/bin/sonar-scanner \
+                              -Dsonar.projectKey=codaui \
+                              -Dsonar.projectName="CODA UI React" \
+                              -Dsonar.sources=src \
+                              -Dsonar.exclusions=**/node_modules/**,**/build/**,**/dist/** \
+                              -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+                              -Dsonar.host.url=http://10.0.1.11:9000 \
+                              -Dsonar.login=$SONAR
+                        '''
+                    }
+                }
+            }
+        }
+        
         stage('Notify for Approval') {
 
             when {
                 expression { params.ENVIRONMENT == 'QA' || params.ENVIRONMENT == 'UAT' }
             }
-
+            
             steps {
                 script {
                     notifyTeam(
@@ -232,4 +255,3 @@ pipeline {
         }
     }
 }
- 
