@@ -1,5 +1,4 @@
-Got it ✅
-Let me break this down clearly for your case (Gradle backend + SonarQube in Jenkins):
+Gradle backend + SonarQube in Jenkins:
 
 ---
 
