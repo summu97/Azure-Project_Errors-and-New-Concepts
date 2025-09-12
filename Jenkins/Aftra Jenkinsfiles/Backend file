@@ -5,7 +5,9 @@ def buildUser = 'Unknown'
 def branchMap = [:]
 def yamlMap = [:]
 def clusterMap = [:]
+def propertyMap = [:]
 def currentBranch = ''
+def currentProperty = ''
 def currentYaml = ''
 def currentCluster = ''
 def imageTag = ''
@@ -20,35 +22,24 @@ pipeline {
     options {
         buildDiscarder(logRotator(daysToKeepStr: '60'))
     }
-
+	
     parameters {
-        choice(
-            name: 'ENVIRONMENT',
-            choices: ['Dev', 'QA', 'UAT'],
-            description: 'Select the target environment'
-        )
-
-        choice(
-            name: 'SERVICE_NAME',
-            choices: [
-                'cacheservice', 'cloudgateway', 'documentmanagementservice',
-                'fileingestionservice', 'internationservice', 'mailservice',
-                'netsuiteintegrationservices', 'participantservice',
-                'playlistandtitlemanagement', 'searchservice', 'securityservice',
-                'serviceregistry'
-            ],
-            description: 'Select the backend service to deploy'
+        choice(name: 'ENVIRONMENT', choices: ['Dev', 'QA', 'UAT'])
+        choice(name: 'SERVICE_NAME', choices: ['fileingestionservice', 'searchservice', 'securityservice', 'playlistandtitlemanagement', 'serviceregistry', 'participantservice', 'cacheservice', 'cloudgateway', 'documentmanagementservice', 'internationservice', 'mailservice', 'netsuiteintegrationservices'])
+        booleanParam(
+            name: 'RUN_SONAR',
+            defaultValue: true,
+            description: 'Run SonarQube Scan?'
         )
     }
-
-    environment {
+	
+	environment {
         USERNAME = credentials('ACRUSERNAME')
         PASSWD = credentials('ACRPASSWD')
         RESOURCE_GROUP = 'CODA_RG'
     }
 
     stages {
-
         stage('Init') {
             steps {
                 script {
@@ -69,60 +60,90 @@ pipeline {
                         QA: 'DevFundCluster',
                         UAT: 'CODAUATCluster'
                     ]
+                    propertyMap = [
+                        Dev: 'dev',
+                        QA: 'qa',
+                        UAT: 'uat'
+                    ]	
+                    
+                    def config = backendConfig(env: params.ENVIRONMENT, svc: params.SERVICE_NAME)
 
                     currentBranch = branchMap[params.ENVIRONMENT]
                     currentYaml = yamlMap[params.ENVIRONMENT]
                     currentCluster = clusterMap[params.ENVIRONMENT]
+					currentProperty = propertyMap[params.ENVIRONMENT]
                     imageTag = "${params.SERVICE_NAME}-${params.ENVIRONMENT}-${env.BUILD_NUMBER}"
+					currentKeyVault = config.currentKeyVault
+					gradleFile      = config.gradleFile
+					appPropsFile    = config.appPropsFile
+					gradleenvFile   = config.gradleenvFile
+					appenvPropsFile = config.appenvPropsFile
+
 
                     echo """
                     ==============================================================
                              BACKEND CONFIG DETAILS:
                     --------------------------------------------------------------
-                            ✅ Service Name     : ${params.SERVICE_NAME}
-                            🌍 Environment      : ${params.ENVIRONMENT}
-                            🌿 Git Branch       : ${currentBranch}
-                            ☸️ AKS Cluster      : ${currentCluster}
-                            📄 Deployment YAML  : ${currentYaml}
-                            🐳 Docker Image Tag : ${imageTag}
+                            ✅ Service Name         : ${params.SERVICE_NAME}
+                            🌍 Environment          : ${params.ENVIRONMENT}
+							🌍 PropertyEnvironment  : ${currentProperty}
+                            🌿 Git Branch           : ${currentBranch}
+                            ☸️ AKS Cluster          : ${currentCluster}
+                            📄 Deployment YAML      : ${currentYaml}
+                            🐳 Docker Image Tag     : ${imageTag}
                     ==============================================================
                     """
                 }
             }
         }
-
+		
         stage('Checkout Code') {
             steps {
                 cleanWs()
                 script {
+                    echo "Checking out source code from branch '${currentBranch}' for service '${params.SERVICE_NAME}'...!"
                     git branch: currentBranch,
-                        credentialsId: 'bitbucket',
-                        url: "git@bitbucket.org:asaiprdf/${params.SERVICE_NAME}.git"
-
-
+                        credentialsId: 'b8e7dce4-8ee0-4a83-b21f-a7f7ccfb20f2',
+                        url: "https://vbboya@bitbucket.org/asaiprdf/${params.SERVICE_NAME}.git"
                 }
             }
         }
 
+        stage('Inject Secrets') {
+            steps {
+                script {
+                    injectSecrets(
+                        currentKeyVault: currentKeyVault,
+                        gradleFile: gradleFile,
+                        gradleenvFile: gradleenvFile,
+                        appPropsFile: appPropsFile,
+                        appenvPropsFile: appenvPropsFile
+                    )
+                }
+            }
+        }
         stage('Build Service') {
             steps {
                 script {
-                    sh "gradle wrapper"
+                    sh "gradle wrapper -Penv=${currentProperty}"
                     sh "sudo chmod 755 gradlew"
-                    sh "./gradlew clean build --no-daemon"
+                    sh "./gradlew clean build --no-daemon -Penv=${currentProperty}"
                 }
             }
         }
-
-        stage("SonarQube Scan") {
+		
+		stage('SonarQube Scan') {
+		    when {
+                expression { return params.RUN_SONAR }
+            }
             steps {
                 withSonarQubeEnv('Sonarqube') {
-                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    withCredentials([string(credentialsId: 'SONAR', variable: 'SONAR')]) {
                         sh """
                             chmod 755 gradlew
                             ./gradlew sonarqube \
-                                -Dsonar.host.url=http://172.208.97.243:9000 \
-                                -Dsonar.login=######################
+                                -Dsonar.host.url=http://10.0.1.11:9000 \
+                                -Dsonar.login=$SONAR
                         """
                     }
                 }
@@ -144,7 +165,7 @@ pipeline {
                         triggeredBy: buildUser
                     )
 
-                    def approvers = ['vbboya@afmsagaftrafund.org']
+                    def approvers = ['vbboya@afmsagaftrafund.org','dkgiddaluri@afmsagaftrafund.org','vsboyina@afmsagaftrafund.org']
                     timeout(time: 30, unit: 'MINUTES') {
                         input(
                             message: "🚦 Approve deployment of '${params.SERVICE_NAME}' to '${params.ENVIRONMENT}'?",
@@ -159,11 +180,19 @@ pipeline {
         stage('Dockerize') {
             steps {
                 script {
-                    sh "mkdir -p $WORKSPACE/certificate"
-                    sh "sudo cp /home/jenkinsadmin/certificate/certificate.crt $WORKSPACE/certificate"
-                    sh "sudo docker build --network=host -t codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag} ."
-                    sh "echo $PASSWD | docker login codaregistry.azurecr.io -u $USERNAME --password-stdin"
-                    sh "sudo docker push codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag}"
+                    // Fetch the keystore password from Key Vault
+                    def keystorePass = sh(
+                        script: "az keyvault secret show --vault-name ${currentKeyVault} --name JAVA-KEYSTORE-PASSWORD --query value -o tsv",
+                        returnStdout: true
+                    ).trim()
+
+                    sh """
+                    mkdir -p $WORKSPACE/certificate
+                    az keyvault secret show --name docker-crt --vault-name ${currentKeyVault} --query value -o tsv > $WORKSPACE/certificate/certificate.crt
+                    sudo docker build --build-arg KEYSTORE_PASS='${keystorePass}' --network=host -t codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag} .
+                    echo $PASSWD | docker login codaregistry.azurecr.io -u $USERNAME --password-stdin
+                    sudo docker push codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag}
+                    """
                 }
             }
         }
@@ -178,7 +207,6 @@ pipeline {
                 }
             }
         }
-
         stage('Notify Success') {
             steps {
                 script {
@@ -193,6 +221,7 @@ pipeline {
                 }
             }
         }
+        
 
         stage('Clean Up') {
             steps {
@@ -200,8 +229,8 @@ pipeline {
                 cleanWs()
             }
         }
-    }
-
+    } 
+	
     post {
         failure {
             script {
@@ -217,4 +246,3 @@ pipeline {
         }
     }
 }
- 
