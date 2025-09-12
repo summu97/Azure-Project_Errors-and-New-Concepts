@@ -1,0 +1,22 @@
+az keyvault secret set \
+    --vault-name <YourKeyVaultName> \
+    --name <YourCertificateName> \
+    --file path/to/certificate.crt
+
+2. stage('Get Certificate from KeyVault') {
+    steps {
+        script {
+            // Set KeyVault and secret name
+            def keyVaultName = "YourKeyVaultName"
+            def secretName   = "MyPublicCert"
+
+            // Retrieve the secret and save as a file
+            sh """
+                az login --identity
+                az keyvault secret show --name ${secretName} --vault-name ${keyVaultName} --query value -o tsv > $WORKSPACE/certificate.crt
+            """
+
+            echo "Certificate retrieved and stored at $WORKSPACE/certificate.crt"
+        }
+    }
+}
