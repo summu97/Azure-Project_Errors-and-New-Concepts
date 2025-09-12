@@ -1,5 +1,5 @@
 Gradle backend + SonarQube in Jenkins:
-
+Might be useful: https://www.freecodecamp.org/news/how-to-improve-your-code-quality-with-sonarqube/
 ---
 
 ### 🔹 How SonarQube works with Gradle
