@@ -1,0 +1,28 @@
+Azure Key Vault CSI driver using Helm:
+1️⃣ Add the repo (if not already)
+helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+
+2️⃣ Update the repo index
+helm repo update
+
+3️⃣ Confirm the chart name
+helm search repo csi-secrets-store-provider-azure --output json
+
+You should see something like:
+NAME                                                      CHART VERSION   APP VERSION DESCRIPTION
+csi-secrets-store-provider-azure/secrets-store-csi-driver-provider-azure  1.2.3          0.0.23     Azure Key Vault CSI driver
+Note the chart version (optional; you can install a specific version with --version).
+
+4️⃣ Install the chart
+helm install csi-secrets-store-provider-azure csi-secrets-store-provider-azure/csi-secrets-store-provider-azure --namespace kube-system --create-namespace
+
+
+🔹 csi-secrets-store-provider-azure → release name
+🔹 csi-secrets-store-provider-azure/secrets-store-csi-driver-provider-azure → chart name
+🔹 --namespace kube-system → install into kube-system
+🔹 --create-namespace → creates the namespace if it doesn’t exist
+
+5️⃣ Verify installation
+helm list -n kube-system
+kubectl get pods -n kube-system | grep csi
+You should see DaemonSet pods running for the CSI driver.
