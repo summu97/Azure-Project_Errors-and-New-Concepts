@@ -1,0 +1,66 @@
+1) Install Kyverno
+helm repo add kyverno https://kyverno.github.io/kyverno
+helm repo update
+helm install kyverno kyverno/kyverno --namespace kyverno --create-namespace
+
+---
+2) Create the policy YAML
+protect-namespaces.yaml
+
+This policy denies DELETE operations for the protected list. It checks both request.name and request.object.metadata.name to handle different delete request payloads.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: protect-namespaces
+spec:
+  validationFailureAction: Enforce   # Capitalized, avoids warning
+  rules:
+    - name: prevent-deleting-namespaces
+      match:
+        resources:
+          kinds:
+            - Namespace
+      validate:
+        message: "Deletion of protected namespaces is not allowed."
+        deny:
+          conditions:
+            all:
+              - key: "{{request.operation}}"
+                operator: Equals
+                value: "DELETE"
+              - key: "{{ request.name || request.object.metadata.name }}"
+                operator: In
+                value:
+                  - "default"
+                  - "kube-system"
+                  - "kube-public"
+                  - "kube-node-lease"
+                  - "namespace1"
+                  - "namespace2"
+
+---
+3) Apply the policy
+
+kubectl apply -f protect-namespaces.yaml
+
+---
+4) Verify Kyverno and the policy
+
+kubectl -n kyverno get pods           # Kyverno pods should be Running
+kubectl get clusterpolicy protect-namespaces -o yaml
+
+---
+5) Test the protection
+kubectl delete namespace namespace1
+# expected result: request denied by admission webhook with your message "Deletion of protected namespaces is not allowed."
+
+---
+6) Emergency/unblock options
+If you (as cluster-admin) need to allow deletion later:
+Remove the namespace from the policy's list and kubectl apply the updated YAML; or
+Delete the policy:
+
+kubectl delete clusterpolicy protect-namespaces
+
+Then proceed to delete the namespace.
