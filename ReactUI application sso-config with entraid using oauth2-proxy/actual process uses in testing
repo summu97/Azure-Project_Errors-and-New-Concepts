@@ -490,6 +490,90 @@ spec:
 * User goes to `https://app2.10.0.2.10.nip.io`
 * NGINX enforces login via `oauth2-proxy`
 * After successful login, headers are injected into the Spring Boot request
+----------
+jenkinsadmin@Jenkins-BuildServer:~$ cat test-app-ingress.yaml 
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app2-ingress
+  namespace: test-ns
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.test-ns.svc.cluster.local/oauth2/auth"
+      #nginx.ingress.kubernetes.io/auth-signin: "http://oauth2-proxy.test-ns.svc.cluster.local/oauth2/start?rd=$escaped_request_uri"        
+      #nginx.ingress.kubernetes.io/auth-signin: "https://oauth2-proxy.test-ns.svc.cluster.local/oauth2/start?rd=$scheme://$host$request_uri"
+    nginx.ingress.kubernetes.io/auth-signin: "https://app2.10.0.2.10.nip.io/oauth2/start?rd=$request_uri"
+
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-Access-Token,Authorization"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "8k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app2.10.0.2.10.nip.io #(we did not to without www in this setup)
+      secretName: app2-tls-secret  # from our earlier serup of ingress
+  rules:
+    - host: app2.10.0.2.10.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app2-svc # or your-service
+                port:
+                  number: 5000
+jenkinsadmin@Jenkins-BuildServer:~$ cat oauth2-config.yaml 
+# oauth2-proxy.values.yaml
+replicaCount: 1
+
+config:
+  clientID: "******************************"
+  clientSecret: "*******************************"
+  cookieSecret: "*******************************"
+  cookie_domain: ".10.0.2.10.nip.io"
+  upstreams:
+    - "http://app2-svc.test-ns.svc.cluster.local:5000/"
+  pass-basic-auth: true
+  pass-access-token: true
+  configFile: |
+    provider="entra-id"
+    oidc_issuer_url="https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/v2.0"
+    scope="openid email profile"
+    #allowed_groups= ["2ec0b685-3840-4332-b7d5-c78f8f5fc600", "00ff698f-429a-4d74-8440-3bb2c887155c"]
+    email_domains = ["afmsagaftrafund.org"]   # allow all emails
+    skip_provider_button= true
+    redirect_url = "https://app2.10.0.2.10.nip.io/oauth2/callback"
+
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "8k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+  hosts:
+    - app2.10.0.2.10.nip.io
+  path: /oauth2
+  pathType: Prefix
+  tls:
+    - secretName: app2-tls-secret
+      hosts:
+        - app2.10.0.2.10.nip.io
+jenkinsadmin@Jenkins-BuildServer:~$
+
+
+
+
+
+helm repo add oauth2-proxy https://oauth2-proxy.github.io/manifests
+helm repo update
+helm install oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-config.yaml -n test-ns
+helm upgrade oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-config.yaml -n test-ns
+helm uninstall oauth2-proxy -n test-ns
+ 
 * Your app can trust those headers to enforce user identity & RBAC.
 
 ---
