@@ -1,4 +1,4 @@
-Here’s a detailed, structured document based on the steps you shared, suitable for implementation or reference:
+Here’s the updated detailed document with your final steps added:
 
 ---
 
@@ -178,13 +178,28 @@ spec:
                   number: <APP-PORT>
 ```
 
-**Notes:**
+---
 
-* Replace placeholders `<APP-NAMESPACE>`, `<APP-SVC>`, `<APP-PORT>`, `<APP-DOMAIN-NAME>`, `<APP-TLS-SECRET>` with actual values.
-* Ensure your DNS points to the Ingress controller.
-* TLS secret must exist for HTTPS termination.
+## **Step 5: Apply Ingress and Test**
+
+1. Apply the Ingress configuration:
+
+```bash
+kubectl apply -f ingress.yaml
+```
+
+2. Test access:
+
+* Open a browser and navigate to:
+
+  ```
+  https://<APP-DOMAIN-NAME>/
+  ```
+* You should be redirected to Azure Entra ID login and, upon success, reach your application.
 
 ---
 
+✅ **End of Document**
 
+---
 
