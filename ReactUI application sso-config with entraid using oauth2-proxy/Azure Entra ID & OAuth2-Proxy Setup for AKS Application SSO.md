@@ -81,6 +81,9 @@ config:
     email_domains = ["afmsagaftrafund.org"]
     skip_provider_button = true
     redirect_url = "https://<APP-DOMAIN-NAME>/oauth2/callback"
+    cookie_expire = "8h"                # Session timeout
+    cookie_refresh = "1h"               # Optional: refresh session every 1h
+    logout_url = "https://login.microsoftonline.com/<TENANT_ID>/oauth2/v2.0/logout?post_logout_redirect_uri=https://<APP-DOMAIN-NAME>"
 
 extraEnv:
   - name: OAUTH2_PROXY_CLIENT_SECRET
