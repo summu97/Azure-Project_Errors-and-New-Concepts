@@ -1,0 +1,498 @@
+0) Azure Entra ID (App Registration) — What to set
+
+Register new app in Azure Portal → Microsoft Entra ID → App registrations → New registration
+Name: testapp-aks-sso
+Supported account types: choose your tenant type
+Redirect URI (type Web): https://app2.10.0.2.10.nip.io/oauth2/callback
+Under Certificates & secrets → New client secret → copy value (CLIENT_SECRET)
+
+Note: Application (client) ID → CLIENT_ID
+Note: Directory (tenant) ID → TENANT_ID
+Under Authentication ensure the redirect URI is allowed and ID tokens enabled if required.
+
+---
+Step 1. Create Secrets in Key Vault
+
+az keyvault secret set --vault-name <your-keyvault> --name "OAUTH2-CLIENT-SECRET" --value "<your-client-secret>"
+
+To generate the cookie secret: openssl rand 32 | xxd -p
+5a8e63fbffa2328c82f14f3d3028b190a93ed76a08f74ace744a4a523a810fed
+
+That output is 32 bytes in hex. Now we need to convert it to the correct Base64 format that OAuth2 Proxy expects for cookieSecret.
+1️⃣ Convert hex to Base64
+echo "5a8e63fbffa2328c82f14f3d3028b190a93ed76a08f74ace744a4a523a810fed" | xxd -r -p | base64
+
+2️⃣ Set it in Azure Key Vault
+az keyvault secret set \
+  --vault-name <your-keyvault> \
+  --name "OAUTH2-COOKIE-SECRET" \
+  --value "<BASE64_STRING_FROM_STEP_1>"
+
+
+
+az keyvault secret set --vault-name <your-keyvault> --name "OAUTH2-COOKIE-SECRET" --value "COOKIE-SECRET"
+=========================================
+step-by-step implementation to check if your AKS cluster has a Managed Identity enabled, enable it if not, and grant it Key Vault access:
+Step 1: Check if Managed Identity is enabled for your AKS cluster
+# Replace <resource-group> and <aks-cluster-name> with your values
+az aks show --resource-group coda_rg --name DevFundCluster --query identity
+
+resource-group coda_rg --name DevFundCluster
+
+If Managed Identity is enabled, you’ll see something like:
+az aks show --resource-group coda_rg --name DevFundCluster --query identity
+{
+  "delegatedResources": null,
+  "principalId": "2495e740-6da2-426a-aca0-067d4b178c41",
+  "tenantId": "2eb52881-f5b4-4855-9142-cd907aa33267",
+  "type": "SystemAssigned",
+  "userAssignedIdentities": null
+}
+
+
+
+
+Step 2: Enable Managed Identity (if not enabled)
+Step 3: Get the Managed Identity principal ID
+az aks show \
+  --resource-group <resource-group> \
+  --name <aks-cluster-name> \
+  --query "identityProfile.kubeletidentity.objectId" -o tsv
+
+
+az aks show \
+  --resource-group coda_rg \
+  --name DevFundCluster \
+  --query "identityProfile.kubeletidentity.objectId" -o tsv
+
+b6b896f3-56bb-424c-aafe-498cf1bec5c6
+
+
+Step 4: Assign Key Vault access policy
+
+# Replace <keyvault-name> with your Key Vault name
+# Replace <principal-id> with the output from Step 3
+az keyvault set-policy \
+  --name codadev \
+  --object-id b6b896f3-56bb-424c-aafe-498cf1bec5c6 \
+  --secret-permissions get list
+
+ERROR:
+Cannot set policies to a vault with '--enable-rbac-authorization' specified
+
+🔹 Why you see this
+Your Key Vault is RBAC-enabled (--enable-rbac-authorization).
+When RBAC is enabled, Key Vault access policies are ignored.
+The az keyvault set-policy command only works for Vaults using access policies, not RBAC.
+
+🔹 How to give your AKS Managed Identity access in RBAC-enabled Key Vault
+You need to use Azure Role Assignments instead of access policies.
+
+1️⃣ Assign Key Vault Secrets User role
+# Replace values as needed
+az role assignment create \
+  --assignee <aks-managed-identity-client-id-or-principal-id> \
+  --role "Key Vault Secrets User" \
+  --scope $(az keyvault show --name <keyvault-name> --query id -o tsv)
+
+az role assignment create \
+  --assignee b6b896f3-56bb-424c-aafe-498cf1bec5c6 \
+  --role "Key Vault Secrets User" \
+  --scope $(az keyvault show --name codadev --query id -o tsv)
+
+NOTE:
+Make sure your aks managed identity has "Key Vault Secrets User" role assigned
+
+
+=========================================
+---
+Step 2. Install CSI Driver + Azure Provider
+
+helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+helm repo update
+helm install csi-secrets-store-provider-azure \
+  csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
+  --namespace kube-system
+
+To Upgrade CSI version:
+helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+helm repo update
+helm upgrade --install csi-secrets-store-provider-azure csi-secrets-store-provider-azure/csi-secrets-store-provider-azure --namespace kube-system
+
+# Upgrade CSI Driver
+helm upgrade --install csi-secrets-store \
+  secrets-store-csi-driver/secrets-store-csi-driver \
+  --namespace kube-system \
+  --set syncSecret.enabled=true
+
+# Upgrade Azure provider
+helm upgrade --install csi-secrets-store-provider-azure \
+  csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
+  --namespace kube-system
+============
+Present working:
+Step 1: Install the Secrets Store CSI Driver and Azure Key Vault Provider
+helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+helm repo update
+
+
+Install the Secrets Store CSI Driver and the Azure Key Vault provider:
+helm install csi-secrets-store-provider-azure csi-secrets-store-provider-azure/csi-secrets-store-provider-azure --namespace kube-system
+
+Verify the installation:
+kubectl get pods -n kube-system -l app=secrets-store-csi-driver
+kubectl get pods -n kube-system -l app=csi-secrets-store-provider-azure
+
+Step 2: Create a SecretProviderClass Resource
+Define a SecretProviderClass resource to specify how secrets should be fetched from Azure Key Vault. Here's an example YAML:
+
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: azure-keyvault-secrets
+  namespace: test-ns
+spec:
+  provider: azure
+  parameters:
+    useVMManagedIdentity: "true"
+    userAssignedIdentityID: "ddb5c5ca-49ec-40ea-ad67-5bea031131f3"   # 👈 add this
+    keyvaultName: "codadev"
+    tenantId: "2eb52881-f5b4-4855-9142-cd907aa33267"
+    objects: |
+      array:
+        - |
+          objectName: OAUTH2-CLIENT-SECRET
+          objectType: secret
+        - |
+          objectName: OAUTH2-COOKIE-SECRET
+          objectType: secret
+
+
+kubectl apply -f secretprovidercass.yaml
+
+To get "userAssignedIdentityID" 
+
+az aks show -n DevFundCluster -g coda_rg --query identityProfile
+{
+  "kubeletidentity": {
+    "clientId": "ddb5c5ca-49ec-40ea-ad67-5bea031131f3",
+    "objectId": "b6b896f3-56bb-424c-aafe-498cf1bec5c6",
+    "resourceId": "/subscriptions/d629b553-466f-4caa-b64b-9ba2bae97c3f/resourcegroups/MC_CODA_RG_DevFundCluster/providers/Microsoft.ManagedIdentity/userAssignedIdentities/DevFundCluster-agentpool"
+  }
+}
+============
+
+---
+Step 3. Create SecretProviderClass
+
+This tells CSI Driver which secrets to pull from Key Vault:
+sudo vim secretprovidercass.yaml
+
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: azure-keyvault-secrets
+  namespace: test-ns
+spec:
+  provider: azure
+  parameters:
+    useVMManagedIdentity: "true"
+    userAssignedIdentityID: "<CLIENT_ID_OF_YOUR_MI>"   # 👈 add this
+    keyvaultName: "codadev"
+    tenantId: "2eb52881-f5b4-4855-9142-cd907aa33267"
+    objects: |
+      array:
+        - |
+          objectName: OAUTH2-CLIENT-SECRET
+          objectType: secret
+        - |
+          objectName: OAUTH2-COOKIE-SECRET
+          objectType: secret
+
+
+
+
+kubectl apply -f secretprovidercass.yaml
+
+
+This will create a Kubernetes secret called oauth2-secret with two keys:
+clientSecret
+cookieSecret
+
+---
+Step 4. oauth2-proxy values.yaml
+
+sudo vim oauth2-proxy-values.yaml
+
+# oauth2-proxy-values.yaml
+config:
+  clientID: "33d9f2f5-6bff-4eed-9d02-b855834060ca"
+  clientSecretFile: "/etc/oauth2_proxy/secrets/OAUTH2-CLIENT-SECRET"   #  add this
+  cookieSecretFile: "/etc/oauth2_proxy/secrets/OAUTH2-COOKIE-SECRET"   #  add this
+  provider: "oidc"
+  oidcIssuerURL: "https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/v2.0"
+  redirectURL: "https://https://devcoda.afmsagaftrafund.org//oauth2/callback"
+
+  # Restrict allowed domains (optional)
+  emailDomains:
+    - "*"
+
+  cookieSecure: true
+  cookieSameSite: "lax"
+  cookieDomains:
+    - "app2.10.0.2.10.nip.io"
+  cookieExpire: "168h"
+
+extraEnv:
+  - name: OAUTH2_PROXY_PROVIDER
+    value: "oidc"
+  - name: OAUTH2_PROXY_OIDC_ISSUER_URL
+    value: "https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/v2.0"
+
+# Use extraVolumeMounts to mount Key Vault secrets via CSI
+extraVolumeMounts:
+  - name: secrets-store
+    mountPath: "/etc/oauth2_proxy/secrets"  # path inside container
+
+extraVolumes:
+  - name: secrets-store
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: "azure-keyvault-secrets"  # must match your SecretProviderClass name
+
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: https://devcoda.afmsagaftrafund.org/
+      paths:
+        - path: /oauth2
+          pathType: Prefix
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+
+---
+Step 5. Deploy
+
+helm repo add oauth2-proxy https://oauth2-proxy.github.io/manifests
+helm repo update
+helm install oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-proxy-values.yaml -n test-ns
+
+helm install oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-proxy-values.yaml -n devcoda-oauth-ingress
+
+files used: oauth2-proxy-values.yaml, test-app-ingress.yaml
+
+helm install oauth2-proxy oauth2-proxy/oauth2-proxy \
+  --values oauth2-proxy-values.yaml \
+  -n oauth2-proxy
+
+
+helm repo add oauth2-proxy https://oauth2-proxy.github.io/manifests
+helm repo update
+helm install oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-config.yaml -n test-ns
+helm upgrade oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-config.yaml -n test-ns
+helm uninstall oauth2-proxy -n test-ns
+
+cat /etc/oauth2_proxy/secrets/OAUTH2-CLIENT-SECRET | tr -d '\n'
+
+
+kubectl apply -f oauth2-debug.yaml
+kubectl exec -it -n test-ns oauth2-debug -- sh
+ls -l /etc/oauth2_proxy/secrets
+cat /etc/oauth2_proxy/secrets/OAUTH2-CLIENT-SECRET
+cat /etc/oauth2_proxy/secrets/OAUTH2-COOKIE-SECRET
+
+Inspect the Mounted Secrets
+Use a debug sidecar with the same volumeMounts
+kubectl -n test-ns patch deploy oauth2-proxy --type='json' -p='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/-",
+    "value": {
+      "name": "debugger",
+      "image": "busybox",
+      "command": ["sleep", "3600"],
+      "volumeMounts": [
+        {
+          "name": "secrets-store",
+          "mountPath": "/etc/oauth2_proxy/secrets",
+          "readOnly": true
+        }
+      ]
+    }
+  }
+]'
+
+
+kubectl exec -n test-ns -it deploy/oauth2-proxy -c debugger -- sh
+ls -l /etc/oauth2_proxy/secrets
+
+hexdump -C /etc/oauth2_proxy/secrets/OAUTH2-CLIENT-SECRET
+
+If your secret looks like:
+00000000  41 42 43 44 45 46 47 48  49 4a 4b 4c 0a           |ABCDEFGHIJKL.|
+
+that trailing 0a is a newline (\n).
+
+
+
+
+
+helm upgrade oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-proxy-values.yaml -n oauth2-proxy
+
+
+helm upgrade oauth2-proxy oauth2-proxy/oauth2-proxy -f oauth2-confi.yaml -n test-ns
+kubectl rollout status deployment/oauth2-proxy -n test-ns
+
+
+
+---
+Result:
+Secrets live only in Key Vault.
+They’re synced securely into AKS via CSI driver.
+oauth2-proxy uses them without ever writing them into Git.
+
+---
+Example Ingress Manifest:
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-apps-ingress
+  namespace: test-ns
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.test-ns.svc.cluster.local/oauth2/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://app2.10.0.2.10.nip.io/oauth2/start?rd=$request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: |
+      X-Auth-Request-User,
+      X-Auth-Request-Email,
+      X-Auth-Request-Groups
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app2.10.0.2.10.nip.io
+      secretName: wildcard-secret
+  rules:
+    - host: app2.10.0.2.10.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app2-svc
+                port:
+                  number: 5000
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy
+                port:
+                  number: 80
+------------------------------
+End-to-End Flow Now:
+User browses → https://app2.10.0.2.10.nip.io.
+NGINX checks /oauth2/auth → oauth2-proxy says “not logged in.”
+User is redirected → Entra ID login page.
+User signs in → Entra issues ID token.
+oauth2-proxy validates token, sets secure cookie.
+User is forwarded to Spring Boot service with headers X-Forwarded-User & X-Forwarded-Email.
+Service is now available only for authenticated users.
+-------------------------------
+By applying below ingress Spring Boot app receives Entra ID claims (like email, groups) as headers automatically? That way, your backend can enforce RBAC easily.
+
+Great ✅ Let’s update your myapp-ingress.yaml so that your Spring Boot backend will receive Entra ID claims (email, user ID, etc.) from oauth2-proxy through headers.
+
+Great ✅ Let’s update your `myapp-ingress.yaml` so that your Spring Boot backend will **receive Entra ID claims (email, user ID, etc.)** from `oauth2-proxy` through headers.
+
+Here’s the improved ingress manifest:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myapp-ingress
+  namespace: test-ns
+  annotations:
+    kubernetes.io/ingress.class: nginx
+
+    # 🔐 Authentication via oauth2-proxy
+    nginx.ingress.kubernetes.io/auth-url: "https://app2.10.0.2.10.nip.io/oauth2/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://app2.10.0.2.10.nip.io/oauth2/start?rd=$request_uri"
+
+    # Pass useful headers from oauth2-proxy → backend
+    nginx.ingress.kubernetes.io/auth-response-headers: |
+      X-Auth-Request-User,
+      X-Auth-Request-Email,
+      X-Auth-Request-Groups
+
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header X-Forwarded-User $auth_resp_x_auth_request_user;
+      proxy_set_header X-Forwarded-Email $auth_resp_x_auth_request_email;
+      proxy_set_header X-Forwarded-Groups $auth_resp_x_auth_request_groups;
+
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app2.10.0.2.10.nip.io
+      secretName: wildcard-secret   # <-- replace with your TLS secret
+  rules:
+    - host: app2.10.0.2.10.nip.io
+      http:
+        paths:
+          # Protect your backend service
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app2-svc
+                port:
+                  number: 5000
+          # Route /oauth2/* to oauth2-proxy
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy
+                port:
+                  number: 80
+```
+
+---
+
+### 🔑 What changed
+
+* Added `X-Auth-Request-Groups` so you can use Azure AD group claims for RBAC.
+* Backend (`myapp-service`) now receives these headers:
+
+  * `X-Forwarded-User` → UPN / object ID
+  * `X-Forwarded-Email` → user’s email
+  * `X-Forwarded-Groups` → Entra groups (if enabled in App Registration claims)
+
+---
+
+✅ With this setup:
+
+* User goes to `https://app2.10.0.2.10.nip.io`
+* NGINX enforces login via `oauth2-proxy`
+* After successful login, headers are injected into the Spring Boot request
+* Your app can trust those headers to enforce user identity & RBAC.
+
+---
+
+Do you want me to also show you how to **configure Entra ID App Registration to emit group claims** (so that `X-Forwarded-Groups` actually contains user’s Entra ID groups)?
+
