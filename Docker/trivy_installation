@@ -1,0 +1,11 @@
+# 1. Download the Trivy binary for Linux
+wget https://github.com/aquasecurity/trivy/releases/download/v0.66.0/trivy_0.66.0_Linux-64bit.tar.gz
+
+# 2. Extract the tarball
+tar zxvf trivy_0.66.0_Linux-64bit.tar.gz
+
+# 3. Move the binary to a directory in PATH
+sudo mv trivy /usr/bin/
+
+# 4. Verify installation
+trivy --version
