@@ -80,7 +80,81 @@ sonar.jdbc.password=StrongPasswordHere
 # Replace localhost with your DB server if external
 sonar.jdbc.url=jdbc:postgresql://localhost/sonarqube
 ```
+---
+## 👤 ** Create a SonarQube User**
 
+```bash
+sudo useradd -d /opt/sonarqube -s /bin/bash sonar
+sudo chown -R sonar:sonar /opt/sonarqube
+```
+
+---
+
+## 🧠 ** Create a systemd Service**
+
+```bash
+sudo nano /etc/systemd/system/sonarqube.service
+```
+
+Paste the following:
+
+```ini
+[Unit]
+Description=SonarQube service
+After=syslog.target network.target
+
+[Service]
+Type=forking
+
+ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
+ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
+
+User=sonar
+Group=sonar
+Restart=always
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+## 🚀 **8️⃣ Start and Enable SonarQube**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable sonarqube
+sudo systemctl start sonarqube
+```
+
+Check status:
+
+```bash
+sudo systemctl status sonarqube
+```
+
+---
+
+## 🌐 **9️⃣ Access SonarQube**
+
+Open your browser:
+
+```
+http://<your-server-ip>:9000
+```
+
+**Default credentials:**
+
+```
+Username: admin
+Password: admin
+```
+
+You’ll be prompted to change the password on first login.
+
+---
 ---
 
 ## 🔹 4. Adjust PostgreSQL Settings (optional but useful)
