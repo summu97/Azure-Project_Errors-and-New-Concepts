@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "value": "eastus" },
+    "clusterName": { "value": "coda-testaks" },
+    "vnetResourceId": { "value": "/subscriptions/d629b553-466f-4caa-b64b-9ba2bae97c3f/resourceGroups/coda_rg/providers/Microsoft.Network/virtualNetworks/DevVnet" },
+    "sshPublicKey": { "value": "ssh-rsa gegWG+PYrcQEPDuwOE3VudAnsx6xXEJob6DpmozIRGf+yiiIJWZ+mXqpQV4mlZ3M8lo/bu/hJ91i/UKwOdK1jGKTzbe3+peHHMKY40hxTpaIWEuezI6dYMuhP0uExfuV0lcKJE5/IUOL2IPzpqP83q/41VBTLQaWBAyxYUnNrl4pajost73FkzAII08uPmAqyVlz9hOJn/U6IrQhctotJY6M2l5bV92DS7g46jh9V1HgzsJUnETbHtJcsUduj/Fdes+DNx2HTZpll74o+KzcSHxXTTHUWVGWjrn1Smn1EQa5Xr9bMnB0DC8S1VzsSyDQbo1/NxwGFFM9KKksKS1WkIRCuRYOM9+eHQaXhM/EfdIT3AyKBaow0Sfl9SaD7kw== test-aks-cluster" },
+    "adminUsername": { "value": "aksadmin" },
+
+    // Networking
+    "serviceCidr": { "value": "10.240.0.0/24" },
+    "dnsServiceIP": { "value": "10.240.0.10" },
+
+    // Latest Kubernetes version
+    "kubernetesVersion": { "value": "1.31.1" },
+
+    // Authorized IPs
+    "authorizedIpRanges": {
+      "value": [
+        "38.79.64.66/32",
+        "172.208.97.243/32"
+      ]
+    },
+
+    // Explicit system pool
+    "systemPool": {
+      "value": {
+        "name": "systempool",
+        "vmSize": "Standard_B4ms",
+        "count": 1,
+        "minCount": 1,
+        "maxCount": 1,
+        "subnetName": "subnet3",
+        "maxPods": 50,
+        "mode": "System"
+      }
+    },
+
+    // Array of user pools
+    "userPools": {
+      "value": [
+        {
+          "name": "userpool1",
+          "vmSize": "Standard_B4ms",
+          "count": 1,
+          "minCount": 1,
+          "maxCount": 2,
+          "subnetName": "subnet3",
+          "maxPods": 50,
+          "mode": "User"
+        },
+      ]
+    },
+
+    "tagSuffix": { "value": "test" }
+  }
+}
