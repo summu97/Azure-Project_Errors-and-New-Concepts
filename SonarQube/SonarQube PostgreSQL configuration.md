@@ -51,6 +51,16 @@ ALTER DATABASE sonarqube SET client_encoding TO 'UTF8';
 
 ---
 
+## Download and Extract SonarQube:
+```
+cd /opt
+sudo wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-10.6.0.92116.zip
+sudo apt install -y unzip
+sudo unzip sonarqube-10.6.0.92116.zip
+sudo mv sonarqube-10.6.0.92116 sonarqube
+```
+
+---
 ## 🔹 3. Configure SonarQube to Use PostgreSQL
 
 Edit SonarQube configuration file:
