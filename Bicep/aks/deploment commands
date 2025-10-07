@@ -1,0 +1,19 @@
+# in your working directory
+ssh-keygen -t rsa -b 4096 -m PEM -f ./aks_deploy_key -C "aks-deploy-key"
+# -f ./aks_deploy_key  -> private key written to ./aks_deploy_key
+# public key in ./aks_deploy_key.pub
+ 
+ 
+az keyvault secret set \
+  --vault-name MyVault \
+  --name "aks-ssh-private-key" \
+  --file ./aks_deploy_key
+
+
+az deployment group what-if   --resource-group CODA_RG   --template-file main.bicep   --parameters @parameters/dev.parameters.json   --parameters tagSuffix=test   --output table
+
+az deployment group create \
+  --resource-group DevRG \
+  --template-file main.bicep \
+  --parameters @parameters/dev.parameters.json \
+  --parameters tagSuffix=test
