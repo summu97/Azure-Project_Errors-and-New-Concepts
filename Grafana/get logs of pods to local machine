@@ -1,0 +1,6 @@
+
+kubectl logs playlistandtitlemanagement-675d49d445-p4stc -n codauat | grep '^2025-10-14' > playlistmanagement-uat-logs-2025-10-14.log
+
+
+
+scp -i /c/Aftra/Jenkins/jekins-buildserver.pem jenkinsadmin@10.0.1.11:/home/jenkinsadmin/playlistmanagement-uat-logs-2025-10-14.log .
