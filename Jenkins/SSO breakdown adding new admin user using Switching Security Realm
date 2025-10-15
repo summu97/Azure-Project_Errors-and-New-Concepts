@@ -1,0 +1,62 @@
+Ah! Now I understand exactly why you’re stuck. In Jenkins **2.492.3**, as soon as you change **Security Realm** to `Jenkins’ own user database` and save, Jenkins **immediately enforces login**. Since there’s **no existing local user**, it **won’t let you create a user via UI** — you’re stuck at the login page.
+
+This is why you **cannot just use the UI to create an admin** — you need to **pre-create a local admin user** first before switching security.
+
+---
+
+### **Correct Approach (UI + CLI combination)**
+
+1. **Keep your Azure AD plugin disabled** temporarily or make sure Jenkins is running without it.
+2. **Pre-create a local admin user** via **Groovy script** or **CLI**.
+
+Here’s a **Groovy script you can run from Jenkins script console** (or via CLI if console is inaccessible):
+
+```groovy
+import jenkins.model.*
+import hudson.security.*
+
+def instance = Jenkins.getInstance()
+def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+hudsonRealm.createAccount("admin","YourPassword123")
+instance.setSecurityRealm(hudsonRealm)
+instance.setAuthorizationStrategy(new FullControlOnceLoggedInAuthorizationStrategy())
+instance.save()
+```
+
+* This creates a local user `admin` with password `YourPassword123`.
+* After running this, you can **log in using the new admin**.
+
+---
+
+### **Next Steps**
+
+1. Log in using the local admin user you just created.
+2. Then go to **Manage Jenkins → Configure Global Security** and safely configure security and roles.
+
+---
+
+If you want, I can give you a **pure CLI method** that **prepares Jenkins with a local admin user** without ever touching the UI — this is safest since your current setup locks you out otherwise.
+
+Do you want me to give that?
+
+
+
+
+
+Step 1: Enable Jenkins’ Own User Database
+
+Go to Manage Jenkins → Configure Global Security.
+
+Under Security Realm, select:
+
+Jenkins’ own user database
+
+
+Optionally check “Allow users to sign up” (so you can create users via UI).
+
+Under Authorization, select:
+
+Full Control Once Logged In
+
+
+Click Save.
