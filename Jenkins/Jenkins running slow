@@ -1,0 +1,5 @@
+https://youtu.be/DIGJwBk1q1k?si=cWSDqPjyc-WlhhTL
+
+cd /var/lib/jenkins
+sudo vim jenkins.model.JenkinsLocationConfiguration.xml
+Change domain name and restrat service
