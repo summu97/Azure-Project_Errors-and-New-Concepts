@@ -225,6 +225,29 @@ exec /usr/sbin/grafana-server --homepath=/usr/share/grafana --config=/etc/grafan
 ```
 
 Save & exit.
++++++++++++++++++++++++++++++++++++++++++++++++
+Already existing:
+
+#!/bin/bash
+set -e
+
+echo "[$(date)] Starting Grafana secrets fetch script..."
+
+# Fetch secrets from Key Vault using Managed Identity
+GRAFANA_CLIENT_ID=$(az keyvault secret show --vault-name CODADEV --name grafana-client-id --query value -o tsv)
+GRAFANA_CLIENT_SECRET=$(az keyvault secret show --vault-name CODADEV --name grafana-sso-client-secret --query value -o tsv)
+CODADEV_SMTP_PASSWORD=$(az keyvault secret show --vault-name CODADEV --name CODADEVSMTPPASSWORD --query value -o tsv)
+
+echo "[$(date)] Secrets fetched successfully. Starting Grafana..."
+
+# Export env variables Grafana expects
+export GF_AUTH_AZUREAD_CLIENT_ID=$GRAFANA_CLIENT_ID
+export GF_AUTH_AZUREAD_CLIENT_SECRET=$GRAFANA_CLIENT_SECRET
+export GF_SMTP_PASSWORD=$CODADEV_SMTP_PASSWORD
+
+# Start Grafana server
+exec /usr/sbin/grafana-server --homepath=/usr/share/grafana --config=/etc/grafana/grafana.ini
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 ---
 
