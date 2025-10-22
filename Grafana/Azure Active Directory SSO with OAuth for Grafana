@@ -51,7 +51,21 @@ auth_url = https://login.microsoftonline.com/<YOUR_TENANT_ID>/oauth2/v2.0/author
 token_url = https://login.microsoftonline.com/<YOUR_TENANT_ID>/oauth2/v2.0/token
 api_url = https://graph.microsoft.com/oidc/userinfo
 role_attribute_path = contains(groups[*], 'GrafanaAdmins') && 'Admin' || 'Viewer'
++++++++++++++++++++++++++++++++++++++++++++++
+Present working content:
 
+[auth.generic_oauth]
+enabled = true
+name = Azure AD
+allow_sign_up = true
+client_id = ${AZURE_CLIENT_ID}
+client_secret = ${AZURE_CLIENT_SECRET}
+scopes = openid email profile
+auth_url = https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/authorize
+token_url = https://login.microsoftonline.com/2eb52881-f5b4-4855-9142-cd907aa33267/oauth2/v2.0/token
+api_url = https://graph.microsoft.com/oidc/userinfo
+role_attribute_path = contains(groups[*], '3c83305f-5ee5-455f-9d57-b784f4d61cc0') && 'Admin' || contains(groups[*], 'e2f44df0-34c0-49da-9e7f-200a07cf3956') && 'Editor'
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 Replace:
 <YOUR_CLIENT_ID> → Application (client) ID
 <YOUR_CLIENT_SECRET> → Client secret value
