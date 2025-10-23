@@ -236,7 +236,7 @@ RemainAfterExit=true
 [Install]
 WantedBy=grafana-server.service
 ```
-### **NOTE: grafana-secrets.env file will only be available if "grafana-fetch-secrets.service" is up and running **
+### **NOTE: "grafana-secrets.env" file will only be available if "grafana-fetch-secrets.service" is up and running **
 ---
 
 ### **6️⃣ Attach Environment File to Grafana Service**
