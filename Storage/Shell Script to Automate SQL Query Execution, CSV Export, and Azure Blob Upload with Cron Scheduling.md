@@ -52,12 +52,18 @@ Paste the following content:
 
 ```bash
 #!/bin/bash
+# ================================
 # SQL → CSV → Azure Blob Automation
+# ================================
+
 set -e
 
+# -----------------------
 # Variables
+# -----------------------
 STORAGE_ACCOUNT="codadevsa"
-CONTAINER_NAME="sample"
+CONTAINER_NAME="codadev"       # change to: codadev | codaqa | codauat
+REPORTS_DIR="reports"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 OUTPUT_DIR="/home/jenkinsadmin/sql_export_output"
 LOG_FILE="$OUTPUT_DIR/export_to_blob.log"
@@ -65,13 +71,19 @@ LOG_FILE="$OUTPUT_DIR/export_to_blob.log"
 SQL_SERVER="test-coda.database.windows.net"
 DB_NAME="CODA-2024-5-8-12-4-DEV"
 DB_USER="sqladmin"
-DB_PASS="M*O+p03"
+DB_PASS="M*"
 
+# Ensure output directory exists
 mkdir -p "$OUTPUT_DIR"
+
 OUTPUT_FILE="$OUTPUT_DIR/output_${TIMESTAMP}.csv"
+
+# Full path to sqlcmd (avoid PATH issues in cron)
 SQLCMD="/opt/mssql-tools/bin/sqlcmd"
 
-# Run SQL query
+# -----------------------
+# Run the SQL query and export results
+# -----------------------
 $SQLCMD -S "$SQL_SERVER" \
        -d "$DB_NAME" \
        -U "$DB_USER" \
@@ -79,22 +91,44 @@ $SQLCMD -S "$SQL_SERVER" \
        -Q "SELECT TransactionType, SRTitleHeaderID, AVTitleHeaderID, SRTH.Title, SRTH.Artist, PerfType, SSN, [Name] AS PerformerName, [Account#], [Perf_VMA], CntrbAmt, [DeductionPCTAmt] AS DeductAmt, CntbCnt, NetAmt, CntrbShrAmt, [DedShrAmt] AS DeductShrAmt, NetShrAmt, OtherRole, AVSRSec, AVUnSec, AVUnAmtNF, AVSRAmtNF, AVUnAmtF, AVSRAmtF, AVUnNFShr, AVSRNFShr, FiscYr, DistrDate, Src, SrcYear, TransactionCode, BusinessID, RunDate, RunTime, UserID, ParticipantHeaderID, ACCT.IsActive, Acct.CreatedDate, Acct.CreatedBy, FileManagerID, RunID, Acct.ModifiedBy, Acct.ModifiedDate, SrcRunDeptID, SrcRunID, DistQueueID, PLHeaderID, PFM.BusinessFileManagerID, PFM.FileManagerDescription, SRTH.BusinessTitleID FROM Account.DRAllocationAcct ACCT INNER JOIN PlayList.FileManager PFM ON ACCT.FileManagerID=PFM.ID AND PFM.IsActive=1 INNER JOIN Title.SRTitleHeader SRTH ON ACCT.SRTitleHeaderID=SRTH.ID AND SRTH.IsActive=1 WHERE ACCT.IsActive=1" \
        -o "$OUTPUT_FILE" -s "," -W
 
+# -----------------------
 # Create container if not exists
+# -----------------------
 az storage container create \
   --name "$CONTAINER_NAME" \
   --account-name "$STORAGE_ACCOUNT" \
   --auth-mode login -o none
 
-# Upload to Azure Blob
+# -----------------------
+# Ensure 'reports' folder exists (simulated in blob)
+# -----------------------
+if ! az storage blob exists \
+    --account-name "$STORAGE_ACCOUNT" \
+    --container-name "$CONTAINER_NAME" \
+    --name "$REPORTS_DIR/.keep" \
+    --auth-mode login -o tsv | grep -q True; then
+
+    az storage blob upload \
+      --account-name "$STORAGE_ACCOUNT" \
+      --container-name "$CONTAINER_NAME" \
+      --name "$REPORTS_DIR/.keep" \
+      --file /dev/null \
+      --auth-mode login -o none
+fi
+
+# -----------------------
+# Upload to Azure Blob (inside reports folder)
+# -----------------------
+
 if az storage blob upload \
     --account-name "$STORAGE_ACCOUNT" \
     --container-name "$CONTAINER_NAME" \
-    --name "$(basename "$OUTPUT_FILE")" \
+    --name "$REPORTS_DIR/$(basename "$OUTPUT_FILE")" \
     --file "$OUTPUT_FILE" \
     --auth-mode login \
-    --overwrite -o none; then
+    -o none; then
 
-    echo "[$(date)] ✅ Uploaded $(basename "$OUTPUT_FILE") to container '$CONTAINER_NAME' in '$STORAGE_ACCOUNT'" >> "$LOG_FILE"
+    echo "[$(date)] ✅ Uploaded $(basename "$OUTPUT_FILE") to '$CONTAINER_NAME/$REPORTS_DIR' in '$STORAGE_ACCOUNT'" >> "$LOG_FILE"
     rm -f "$OUTPUT_FILE"
 else
     echo "[$(date)] ❌ Upload failed for $OUTPUT_FILE" >> "$LOG_FILE"
