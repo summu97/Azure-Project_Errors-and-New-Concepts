@@ -1,12 +1,6 @@
 Here’s a **README.md** that directly reflects exactly what you provided, without extra explanations:
 
 ```markdown
-# SQL_Report_Scripts
-
-## Directory Structure
-
-```
-
 SQL_Report_Scripts/
 ├── export_DEVSQL_reports.sh
 ├── export_QASQL_reports.sh
@@ -17,6 +11,9 @@ SQL_Report_Scripts/
 │   ├── UATSQL_reports.log
 │   └── cron_DEVSQL.log
 └── reports_output
+
+```
+
 
 ````
 
