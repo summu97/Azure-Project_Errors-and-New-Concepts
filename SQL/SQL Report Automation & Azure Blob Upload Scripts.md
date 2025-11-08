@@ -217,10 +217,3 @@ Add entries for daily execution at 7 AM:
 0 7 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_UATSQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/cron_UATSQL.log 2>&1
 ```
 
-```
-
----
-
-
-Do you want me to do that?
-```
