@@ -15,14 +15,14 @@ SQL_Report_Scripts/
 ```
 
 
-````
+
 
 ## Steps to Set Up
 
 ### 1️⃣ Create the folder structure
 ```bash
 mkdir -p /home/jenkinsadmin/SQL_Report_Scripts/report_logs
-````
+```
 
 ### 2️⃣ Move into the main folder
 
