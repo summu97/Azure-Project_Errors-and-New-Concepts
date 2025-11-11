@@ -1,0 +1,69 @@
+pipeline {
+    agent any
+
+    environment {
+        THRESHOLD_DAYS = 5
+        TEAMS_WEBHOOK = 'https://prod-13.centralindia.logic.azure.com:443/workflows/db59c2860a05449081480ba631850e88/triggers/manual/paths/invoke?api-version=2016-06-01&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=CDckBf0gKwFAC8ddpcW-rMurNuHgBnRvojiIz69CHe8'
+    }
+
+    triggers {
+        cron('H 7 * * *')
+    }
+
+    stages {
+        stage('Check App Registration Expiry') {
+            steps {
+                script {
+                    echo "🔐 Logging in to Azure..."
+                    sh 'az login --identity'
+
+                    echo "🔍 Checking App Registrations expiring within next $THRESHOLD_DAYS days..."
+                    sh '''#!/bin/bash
+                    set -e
+                    CURRENT_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+                    > appreg_report.txt
+                    az ad app list --all --query "[].{displayName:displayName, appId:appId}" -o tsv | \
+                    while IFS=$'\\t' read -r displayName appId; do
+                        az ad app credential list --id "$appId" \
+                        --query "[].{AppName:'$displayName', AppId:'$appId', Expiry:endDateTime}" -o tsv
+                    done | sort -k3 | head -n 5 | \
+                    while IFS=$'\\t' read -r appName appId expiry; do
+                        if [[ -n "$expiry" ]]; then
+                            expiry_date=$(date -d "$expiry" +%s)
+                            current_date=$(date -d "$CURRENT_DATE" +%s)
+                            diff_days=$(( (expiry_date - current_date) / 86400 ))
+                            if (( diff_days <= $THRESHOLD_DAYS && diff_days >= 0 )); then
+                                echo "⚠️ App Registration expiring soon: $appName ($appId) expires in $diff_days days on $expiry" | tee -a appreg_report.txt
+                            fi
+                        fi
+                    done
+                    '''
+                }
+            }
+        }
+
+        stage('Notify Team if Expiring Soon') {
+            steps {
+                script {
+                    def reportFile = 'appreg_report.txt'
+                    if (fileExists(reportFile) && readFile(reportFile).trim()) {
+                        def reportLines = readFile(reportFile).trim().split("\n")
+                        def message = "**❗ Azure-AppReg-Expiry-Monitor: Build #${env.BUILD_NUMBER}**\n\n⚠️ **Azure App Registrations Expiring Soon:**\n\n"
+                        message += reportLines.join("\n\n")  // Each line separated for clarity
+
+                        office365ConnectorSend(
+                            webhookUrl: env.TEAMS_WEBHOOK,
+                            status: "Failure",
+                            color: "#FF0000",
+                            message: message,
+                            adaptiveCards: true
+                        )
+                        echo "✅ Notification sent to Teams."
+                    } else {
+                        echo "✅ No App Registrations expiring within next ${THRESHOLD_DAYS} days. No notification sent."
+                    }
+                }
+            }
+        }
+    }
+}
