@@ -33,10 +33,10 @@ cd /home/jenkinsadmin/SQL_Report_Scripts
 ### 3️⃣ Create the export script
 
 ```bash
-vim export_UATSQL_reports.sh
+vim export_QASQL_reports.sh
 ```
 
-#### Sample Script: `export_UATSQL_reports.sh`
+#### Sample Script: `export_QASQL_reports.sh`
 
 ```bash
 #!/bin/bash
@@ -50,18 +50,18 @@ set -e  # Exit immediately if a command exits with a non-zero status
 # Configuration Variables
 # -----------------------
 STORAGE_ACCOUNT="codadevsa"
-CONTAINER_NAME="codauat"
+CONTAINER_NAME="codaqa"
 REPORTS_DIR="reports"
-SUBFOLDERS=("Unclaimed_Ending_Balance" "Unclaimed_Activities" "Playlist_MatchTypes")
+SUBFOLDERS=("Unclaimed_Ending_Balance" "Unclaimed_Activities" "Playlist_MatchTypes" "Accounting_Distribution")
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 OUTPUT_DIR="/home/jenkinsadmin/SQL_Report_Scripts/reports_output"
-LOG_FILE="/home/jenkinsadmin/SQL_Report_Scripts/report_logs/UATSQL_reports.log"
+LOG_FILE="/home/jenkinsadmin/SQL_Report_Scripts/report_logs/QASQL_reports.log"
 SQLCMD="/opt/mssql-tools/bin/sqlcmd"
-ENV="UAT"
+ENV="QA"
 
-SQL_SERVER="codauatdbserver.database.windows.net"
+SQL_SERVER="codaqadbserver.database.windows.net"
 DB_NAME="CODA_MIGRATION"
-KEYVAULT_NAME="CODAUAT-KEYVAULT"  # Your Azure Key Vault name
+KEYVAULT_NAME="CODADEV"  # Your Azure Key Vault name
 
 # -----------------------
 # Fetch database credentials from Key Vault
@@ -82,6 +82,7 @@ declare -A REPORTS
 REPORTS["Unclaimed_Ending_Balance"]="$OUTPUT_DIR/Unclaimed_Ending_Balance_${ENV}_${TIMESTAMP}.csv"
 REPORTS["Unclaimed_Activities"]="$OUTPUT_DIR/Unclaimed_Activities_${ENV}_${TIMESTAMP}.csv"
 REPORTS["Playlist_MatchTypes"]="$OUTPUT_DIR/Playlist_MatchTypes_${ENV}_${TIMESTAMP}.csv"
+REPORTS["Accounting_Distribution"]="$OUTPUT_DIR/Distribution_${ENV}_${TIMESTAMP}.csv"
 
 # -----------------------
 # Ensure container exists
@@ -152,14 +153,23 @@ $SQLCMD -S "$SQL_SERVER" \
        -Q "SELECT [LKPA].[Description] AS [Transaction Type], [FM].[BusinessFileManagerId] AS [Source], [PH].[Account#] AS [Participant Account#], COALESCE(PH.LastName, '') + ', ' + COALESCE(PH.FirstName, '') + ' ' + COALESCE(PH.MiddleName, '') AS [Participant Name], [UPIV].[Amt] AS [Amount], [LKPB].[KeyCode] AS [Code], [LKPB].[Description] AS [Code Description], [UPI].[HeldDate] AS [Held Date], CASE WHEN [UPI].[IsReleased] = 1 THEN 'TRUE' ELSE 'FALSE' END AS [Amount Released], [UPI].[ReleaseDate] AS [Release Date] FROM [Payment].[UnClaimedPaymentIdentifierValue] UPIV WITH (NOLOCK) INNER JOIN [Payment].[UnClaimedPaymentIdentifier] UPI WITH (NOLOCK) ON UPI.ID = UPIV.UnClaimedPaymentIdentifierID INNER JOIN [Dist].[DistQueue] DQ WITH (NOLOCK) ON DQ.ID = UPI.DistQueueID INNER JOIN [dbo].[Lookup] LKPA WITH (NOLOCK) ON LKPA.LookupId = DQ.DistTransTypeID INNER JOIN [dbo].[Lookup] LKPB WITH (NOLOCK) ON LKPB.LookupId = UPI.HeldCodeID INNER JOIN [PlayList].[FileManager] FM WITH (NOLOCK) ON FM.ID = UPIV.FileManagerID INNER JOIN [Participant].[ParticipantHeader] PH WITH (NOLOCK) ON PH.ID = UPIV.ParticipantHeaderID WHERE UPIV.IsActive = 1 AND UPI.IsActive = 1 AND LKPA.IsActive = 1 AND LKPB.IsActive = 1 AND FM.IsActive = 1 AND PH.IsActive = 1;" \
        -o "${REPORTS[Unclaimed_Activities]}" -s "," -W
 
+
 # Playlist Match Type Results
 $SQLCMD -S "$SQL_SERVER" \
        -d "$DB_NAME" \
        -U "$DB_USER" \
        -P "$DB_PASS" \
-       -Q "WITH MatchTypeCounts AS (SELECT ph.FileManagerID, ph.PLMatchTypeID, COUNT(ph.ID) AS Count, SUM(ph.PlaylistAmount) AS TotalAmount FROM [Playlist].[PlaylistHeader] ph GROUP BY ph.FileManagerID, ph.PLMatchTypeID), TotalCounts AS (SELECT FileManagerID, SUM(Count) AS TotalRecords, SUM(TotalAmount) AS TotalAmountAll FROM MatchTypeCounts GROUP BY FileManagerID) SELECT fm.BusinessFileManagerID AS FileManagerName, lk.KeyCode AS MatchTypeName, m.Count, m.TotalAmount, CAST(ROUND((m.Count * 100.0) / t.TotalRecords, 2) AS DECIMAL(6,2)) AS PercentageContribution FROM MatchTypeCounts m INNER JOIN TotalCounts t ON m.FileManagerID = t.FileManagerID INNER JOIN [Playlist].[FileManager] fm ON m.FileManagerID = fm.ID INNER JOIN [dbo].[Lookup] lk ON m.PLMatchTypeID = lk.LookupId AND lk.LookUpType = 'PL_MatchType' ORDER BY fm.BusinessFileManagerID, lk.KeyCode;" \
+       -Q "WITH MatchTypeCounts AS (SELECT ph.FileManagerID, ph.PLMatchTypeID, COUNT(ph.ID) AS Count, SUM(ph.PlaylistAmount) AS TotalAmount FROM [Playlist].[PlaylistHeader] ph GROUP BY ph.FileManagerID, ph.PLMatchTypeID), TotalCounts AS (SELECT FileManagerID, SUM(Count) AS TotalRecords, SUM(TotalAmount) AS TotalAmountAll FROM MatchTypeCounts GROUP BY FileManagerID) SELECT fm.BusinessFileManagerID AS FileManagerName, lk.KeyCode AS MatchTypeName, m.Count, m.TotalAmount, CAST(ROUND((m.Count * 100.0) / t.TotalRecords, 2) AS DECIMAL(6,2)) AS PercentageContribution FROM MatchTypeCounts m INNER JOIN TotalCounts t ON m.FileManagerID = t.FileManagerID INNER JOIN [Playlist].[FileManager] fm ON m.FileManagerID = fm.ID INNER JOIN [Security].[DeptMaster] dm ON fm.DeptID = dm.ID INNER JOIN [dbo].[Lookup] lk ON m.PLMatchTypeID = lk.LookupId WHERE fm.IsActive = 1 AND dm.IsActive = 1 AND lk.IsActive = 1 AND lk.LookUpType = 'PL_MatchType' AND dm.KeyCode = 'SR' ORDER BY fm.BusinessFileManagerID, lk.KeyCode;" \
        -o "${REPORTS[Playlist_MatchTypes]}" -s "," -W
 
+
+# Accounting/Distribution Report
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "SELECT TransactionType, SRTitleHeaderID, AVTitleHeaderID, SRTH.Title, SRTH.Artist, PerfType, SSN, [Name] AS PerformerName, [Account#], [Perf_VMA], CntrbAmt, [DeductionPCTAmt] AS DeductAmt, CntbCnt, NetAmt, CntrbShrAmt, [DedShrAmt] AS DeductShrAmt, NetShrAmt, OtherRole, AVSRSec, AVUnSec, AVUnAmtNF, AVSRAmtNF, AVUnAmtF, AVSRAmtF, AVUnNFShr, AVSRNFShr, FiscYr, DistrDate, Src, SrcYear, TransactionCode, BusinessID, RunDate, RunTime, UserID, ParticipantHeaderID, ACCT.IsActive, Acct.CreatedDate, Acct.CreatedBy, FileManagerID, RunID, Acct.ModifiedBy, Acct.ModifiedDate, SrcRunDeptID, SrcRunID, DistQueueID, PLHeaderID, PFM.BusinessFileManagerID, PFM.FileManagerDescription, SRTH.BusinessTitleID FROM [Account].[DRAllocationAcct] ACCT WITH (NOLOCK) INNER JOIN [PlayList].[FileManager] PFM WITH (NOLOCK) ON ACCT.FileManagerID = PFM.ID INNER JOIN [Title].[SRTitleHeader] SRTH WITH (NOLOCK) ON ACCT.SRTitleHeaderID = SRTH.ID WHERE ACCT.IsActive=1 AND PFM.IsActive=1 AND SRTH.IsActive=1;" \
+       -o "${REPORTS[Accounting_Distribution]}" -s "," -W
 
 
 # -----------------------
@@ -192,14 +202,14 @@ echo "[$(date)]   All available report uploads processed." >> "$LOG_FILE"
 ### 4️⃣ Make the script executable
 
 ```bash
-sudo chmod +x /home/jenkinsadmin/SQL_Report_Scripts/export_UATSQL_reports.sh
+sudo chmod +x /home/jenkinsadmin/SQL_Report_Scripts/export_QASQL_reports.sh
 ```
 
 ### 5️⃣ Run the script manually
 
 ```bash
 cd /home/jenkinsadmin/SQL_Report_Scripts
-./export_UATSQL_reports.sh
+./export_QASQL_reports.sh
 ```
 
 ### 6️⃣ Automate using Cron
@@ -213,7 +223,11 @@ crontab -e
 Add entries for daily execution at 7 AM:
 
 ```cron
-0 7 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_QASQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/cron_QASQL.log 2>&1
-0 7 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_UATSQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/cron_UATSQL.log 2>&1
+30 1 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_QASQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/cron_QASQL.log 2>&1
+30 1 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_UATSQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/cron_UATSQL.log 2>&1
 ```
+### 6️⃣ To check
 
+```bash
+crontab -l
+```
