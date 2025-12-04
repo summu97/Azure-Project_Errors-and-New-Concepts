@@ -1,0 +1,103 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'uat'],
+            description: 'Select environment to update Key Vault'
+        )
+        string(name: 'SECRET_NAME', description: 'Key Vault secret name to update')
+        password(name: 'SECRET_VALUE', description: 'Key Vault secret value (hidden)')
+    }
+
+    stages {
+        stage('Login with Managed Identity') {
+            steps {
+                script {
+                    echo "🔐 Authenticating with Managed Identity..."
+                    sh """
+                        set +x
+                        az account show > /dev/null || az login --identity > /dev/null
+                        set -x
+                    """
+                }
+            }
+        }
+
+        stage('Check if Secret Exists & Confirm') {
+            steps {
+                script {
+                    def keyVaultName = (params.ENVIRONMENT == 'dev') ? 'CODADEV' : 'CODAUAT-KEYVAULT'
+                    echo "🔍 Checking if secret '${params.SECRET_NAME}' exists in ${keyVaultName}..."
+
+                    def exists = sh(
+                        script: """
+                            set +x
+                            az keyvault secret show --vault-name ${keyVaultName} --name ${params.SECRET_NAME} --query "id" -o tsv 2>/dev/null || echo 'NOT_FOUND'
+                            set -x
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    if (exists == "NOT_FOUND") {
+                        echo "✅ Secret '${params.SECRET_NAME}' not found in ${keyVaultName}. A new secret will be created."
+                    } else {
+                        echo "⚠️ Secret '${params.SECRET_NAME}' already exists in ${keyVaultName}."
+                        try {
+                            // This shows two buttons: green "Proceed" and the built-in red "Abort"
+                            input message: "Secret '${params.SECRET_NAME}' exists in ${keyVaultName}. Proceed or Abort?", ok: "Proceed"
+                            echo "✅ Proceed selected. Continuing with update."
+                        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+                            error("❌ Aborted by user. No update performed.")
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Update Secret in Key Vault') {
+            steps {
+                script {
+                    def keyVaultName = (params.ENVIRONMENT == 'dev') ? 'CODADEV' : 'CODAUAT-KEYVAULT'
+                    echo "🚀 Updating secret '${params.SECRET_NAME}' in ${keyVaultName} (value hidden)..."
+                    sh """
+                        set +x
+                        az keyvault secret set --vault-name ${keyVaultName} --name ${params.SECRET_NAME} --value "${params.SECRET_VALUE}" --only-show-errors > /dev/null
+                        set -x
+                    """
+                    echo "✅ Secret '${params.SECRET_NAME}' updated successfully in ${keyVaultName}."
+                }
+            }
+        }
+
+        stage('Disable Old Secret Versions') {
+            steps {
+                script {
+                    def keyVaultName = (params.ENVIRONMENT == 'dev') ? 'CODADEV' : 'CODAUAT-KEYVAULT'
+                    echo "🧹 Disabling older versions of '${params.SECRET_NAME}' in ${keyVaultName}..."
+                    sh """
+                        set +x
+                        # Identify the latest version by creation time (reliable ordering)
+                        latest_ver=\$(az keyvault secret list-versions --vault-name ${keyVaultName} --name ${params.SECRET_NAME} --query "sort_by(@, &attributes.created)[-1].id" -o tsv)
+                        all_versions=\$(az keyvault secret list-versions --vault-name ${keyVaultName} --name ${params.SECRET_NAME} --query "[].id" -o tsv)
+
+                        echo "Latest version identified: \$latest_ver"
+
+                        for ver in \$all_versions; do
+                            if [ "\$ver" != "\$latest_ver" ]; then
+                                echo "🔒 Disabling old version: \$ver"
+                                az keyvault secret set-attributes --id "\$ver" --enabled false > /dev/null
+                            else
+                                echo "✅ Ensuring latest version stays enabled: \$ver"
+                                az keyvault secret set-attributes --id "\$ver" --enabled true > /dev/null
+                            fi
+                        done
+                        set -x
+                    """
+                    echo "✅ Verified: latest version enabled, all previous ones disabled."
+                }
+            }
+        }
+    }
+}
