@@ -1,0 +1,86 @@
+pipeline {
+    agent any
+	
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '5')) // keep only last 5 builds
+        ansiColor('xterm')
+        timestamps()		
+    }
+    parameters {
+        choice(
+            choices: ['Dev','QA','UAT'],
+            description: 'Select the target environment',
+            name: 'ENVIRONMENT'
+        )
+        choice(
+            choices: ['cacheservice','cloudgateway','docmanagement','fileingestion',
+                      'internationalservice','securityservice','serviceregistry','searchservice','mailservice',
+                      'netsuiteintegrationservice','participantservice','playlistandtitlemanagement'],
+            description: 'Select the target API',
+            name: 'API'
+        )
+        booleanParam(
+            name: 'RESTART_ALL',
+            defaultValue: false,
+            description: 'Check this to restart all services instead of the selected one'
+        )
+    }
+
+    stages { 
+        stage('Restart Pods') {
+            steps {
+                script {
+                    def clusterName = ''
+                    def namespace = ''
+
+                    if (params.ENVIRONMENT == 'Dev') {
+                        clusterName = 'DevFundCluster'
+                        namespace = 'codadev'
+                    } else if (params.ENVIRONMENT == 'QA') {
+                        clusterName = 'DevFundCluster'
+                        namespace = 'codaqa'
+                    } else if (params.ENVIRONMENT == 'UAT') {
+                        clusterName = 'CODAUATCluster'
+                        namespace = 'codauat'
+                    }
+
+                    def services = [
+                        'cacheservice','cloudgateway','docmanagement','fileingestion',
+                        'internationalservice','securityservice','serviceregistry','searchservice','mailservice',
+                        'netsuiteintegrationservice','participantservice','playlistandtitlemanagement'
+                    ]
+
+                    if (params.RESTART_ALL) {
+                        echo "\n You have chosen to RESTART ALL SERVICES in ${params.ENVIRONMENT} environment."
+                    } else {
+                        echo "\n You have chosen to RESTART the service: ${params.API} in ${params.ENVIRONMENT} environment."
+                    }
+
+                    input message: "Do you want to proceed with restarting?",
+                          ok: "Yes, Restart",
+                          parameters: [
+                              booleanParam(defaultValue: true, description: 'Confirm restart', name: 'CONFIRM')
+                          ]
+
+                    withCredentials([azureServicePrincipal('AKSCredentials')]) {
+                        sh 'az login --identity'
+                        sh "az aks get-credentials --name ${clusterName} --resource-group CODA_RG --overwrite-existing"
+
+                        if (params.RESTART_ALL) {
+                            echo "Restarting ALL services in namespace ${namespace}..."
+                            services.each { service ->
+                                echo "Restarting ${service}..."
+                                sh "kubectl rollout restart deployment ${service} -n ${namespace}"
+                            }
+                            echo " All services restarted successfully."
+                        } else {
+                            echo "Restarting ${params.API} in namespace ${namespace}..."
+                            sh "kubectl rollout restart deployment ${params.API} -n ${namespace}"
+                            echo " Service ${params.API} restarted successfully."
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
