@@ -1,0 +1,92 @@
+pipeline {
+    agent any
+
+parameters {
+        choice(
+            choices: ['Dev','QA','UAT'],
+            description: 'Select the target environment',
+            name: 'ENVIRONMENT'
+        )
+        choice(
+            choices: ['cacheservice','cloudgateway','docmanagement','fileingestion',
+            'internationalservice','securityservice','serviceregistry','searchservice','mailservice',
+            'netsuiteintegrationservice','participantservice','playlistandtitlemanagement','react-webapp'],
+            description: 'Select the target API',
+            name: 'API'
+        )
+        choice(name: 'SCALE_ACTION', choices: ['Scale Up', 'Scale Down'], description: 'Choose the scaling action')
+    }
+  stages { 
+    stage('Scale up Pods') {
+        when {
+            expression { params.SCALE_ACTION == 'Scale Up' }
+        }
+        steps {
+            script {
+                if (environment == 'Dev'){
+                    withCredentials([azureServicePrincipal('AKSCredentials')]) {
+                        sh 'az login --identity'
+                        sh 'az aks get-credentials --name DevFundCluster --resource-group CODA_RG --overwrite-existing'
+                        sh """kubectl scale deployment ${env.API} --replicas=1 -n codadev"""
+                    }
+                    }
+                    else if (environment == 'QA') {
+                        withCredentials([azureServicePrincipal('AKSCredentials')]) {
+                            sh 'az login --identity'
+                            sh 'az aks get-credentials --name DevFundCluster --resource-group CODA_RG --overwrite-existing'
+                            sh """kubectl scale deployment ${env.API} --replicas=1 -n codaqa"""
+                 
+                    }
+                
+                    }
+                     else if (environment == 'UAT') {
+                        withCredentials([azureServicePrincipal('AKSCredentials')]) {
+                             sh 'az login --identity'
+                             sh 'az aks get-credentials --name CODAUATCluster --resource-group CODA_RG --overwrite-existing'
+                             sh """kubectl scale deployment ${env.API} --replicas=1 -n codauat"""
+            
+                    }
+                
+                    }  
+
+                }
+            }
+        }
+        stage('Scale Down Pods') {
+            when {
+                expression { params.SCALE_ACTION == 'Scale Down' }
+            }
+            steps {
+                script {
+                    if (environment == 'Dev'){
+                        withCredentials([azureServicePrincipal('AKSCredentials')]) {
+                            sh 'az login --identity'
+                            sh 'az aks get-credentials --name DevFundCluster --resource-group CODA_RG --overwrite-existing'
+                            sh """kubectl scale deployment ${env.API} --replicas=0 -n codadev"""
+                        }
+                        }
+                        else if (environment == 'QA') {
+                            withCredentials([azureServicePrincipal('AKSCredentials')]) {
+                                sh 'az login --identity'
+                                sh 'az aks get-credentials --name DevFundCluster --resource-group CODA_RG --overwrite-existing'
+                                sh """kubectl scale deployment ${env.API} --replicas=0 -n codaqa"""
+                 
+                        }
+                    
+                        }
+                         else if (environment == 'UAT') {
+                            withCredentials([azureServicePrincipal('AKSCredentials')]) {
+                                 sh 'az login --identity'
+                                 sh 'az aks get-credentials --name CODAUATCluster --resource-group CODA_RG --overwrite-existing'
+                                 sh """kubectl scale deployment ${env.API} --replicas=0 -n codauat"""
+                       
+                        }
+                    
+                        }  
+    
+                    }
+                }
+            }
+    
+  }
+}
