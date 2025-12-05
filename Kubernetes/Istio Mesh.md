@@ -1,12 +1,5 @@
 Below is a **complete, practical, production-style guide** to apply **Istio service mesh** to your services running in the **`coda-application` namespace**.
 
-I will give you:
-
-✅ Exact steps
-✅ All YAML files
-✅ Commands to apply
-✅ How traffic flows afterward
-
 Services: **serviceA**, **serviceB**, **serviceC**
 Namespace: **`coda-application`**
 
