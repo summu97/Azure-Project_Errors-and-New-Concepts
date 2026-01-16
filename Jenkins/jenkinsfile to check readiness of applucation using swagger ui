@@ -1,0 +1,291 @@
+@Library('shared-lib') _
+
+pipeline {
+    agent any
+
+    tools { gradle 'Gradle' }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '60')) // keep only last 60 builds
+        ansiColor('xterm')
+        timestamps()		
+    }
+
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'qa', 'uat'])
+        choice(name: 'SERVICE_NAME', choices: [
+            "cacheservice","cloudgateway","documentmanagementservice",
+            "fileingestionservice","internationservice","iprdfintegrationservices",
+            "mailservice","netsuiteintegrationservices","participantservice",
+            "playlistandtitlemanagement","searchservice","securityservice","serviceregistry"
+        ])
+        booleanParam(name: 'RUN_SONAR', defaultValue: true, description: 'Run SonarQube Scan?')
+        booleanParam(name: 'RUN_DOCKER_SCAN', defaultValue: false, description: 'Run Docker image scan?')
+    }
+
+    environment {
+        USERNAME          = credentials('ACRUSERNAME')
+        PASSWD            = credentials('ACRPASSWD')
+
+    }
+
+    stages {
+        stage('Init') {
+            steps {
+                script {
+                    wrap([$class: 'BuildUser']) { buildUser = env.BUILD_USER ?: 'Unknown' }
+					currentBuild.displayName = "#${env.BUILD_NUMBER}-${params.ENVIRONMENT}- ${params.SERVICE_NAME}-${buildUser}"
+
+                    // use shared library config
+                    def cfg = backendConfig(env: params.ENVIRONMENT, svc: params.SERVICE_NAME)
+
+                    cfg.each { key, value -> env."${key}" = value }
+                }
+            }
+        }
+
+        stage('Checkout Source & Scripts') {
+            steps {
+                cleanWs()
+                script {
+                    git branch: currentBranch,
+                        credentialsId: 'b8e7dce4-8ee0-4a83-b21f-a7f7ccfb20f2',
+                        url: "https://vbboya@bitbucket.org/asaiprdf/${params.SERVICE_NAME}.git"
+
+                    dir("${WORKSPACE}/pipeline-scripts") {
+                        git branch: 'master',
+                            credentialsId: 'b8e7dce4-8ee0-4a83-b21f-a7f7ccfb20f2',
+                            url: "https://vbboya@bitbucket.org/asaiprdf/aftra-iac-scripts.git"
+                    }
+                }
+            }
+        }
+
+        stage('Prepare Secrets') {
+            steps {
+                script {
+                    injectSecrets(
+                        currentKeyVault: currentKeyVault,
+                        gradleFile: gradleFile,
+                        gradleenvFile: gradleenvFile,
+                        appPropsFile: appPropsFile,
+                        appenvPropsFile: appenvPropsFile
+                    )
+                }
+            }
+        }
+
+        stage('Build Service') {
+            steps {
+                script {
+                    sh """
+                        gradle wrapper -Penv=${params.ENVIRONMENT.toLowerCase()}
+                        chmod 755 gradlew
+                        ./gradlew clean build --no-daemon -Penv=${params.ENVIRONMENT.toLowerCase()}
+                    """
+                }
+            }
+        }
+
+        stage('SonarQube Scan') {
+            when { expression { return params.RUN_SONAR } }
+            steps {
+                withSonarQubeEnv('Sonarqube') {
+                    withCredentials([string(credentialsId: 'SONAR', variable: 'SONAR')]) {
+                        sh """
+                            chmod 755 gradlew
+							./gradlew tasks | grep jacocoTestReport && \
+							  ./gradlew jacocoTestReport
+							  ./gradlew test sonarqube \
+							  -Dsonar.host.url=$SONAR_HOST_URL \
+							  -Dsonar.login=$SONAR \
+							  -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoTestReport.xml
+								
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Manual Approval (qa/uat)') {
+            when { expression { params.ENVIRONMENT in ['qa','uat'] } }
+            steps {
+                script {
+                    notifyTeam(
+                        env: params.ENVIRONMENT,
+                        serviceName: params.SERVICE_NAME,
+                        buildNumber: env.BUILD_NUMBER,
+                        buildUrl: env.BUILD_URL,
+                        type: 'approval',
+                        triggeredBy: buildUser
+                    )
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input message: "Approve deployment of ${params.SERVICE_NAME} to ${params.ENVIRONMENT}?",
+                              ok: "Approve",
+                              submitter: 'vbboya@afmsagaftrafund.org,dkgiddaluri@afmsagaftrafund.org,vsboyina@afmsagaftrafund.org'
+                    }
+                }
+            }
+        }
+
+        stage('Build & Push Docker Image') {
+            steps {
+                script {
+                    def keystorePass = sh(
+                        script: "az keyvault secret show --vault-name ${currentKeyVault} --name JAVA-KEYSTORE-PASSWORD --query value -o tsv",
+                        returnStdout: true
+                    ).trim()
+
+                    wrap([$class: 'MaskPasswordsBuildWrapper', varPasswordPairs: [[password: keystorePass, var: 'KEYSTORE_PASS']]]) {
+                        withEnv(["KEYSTORE_PASS=${keystorePass}"]) {
+                            sh """
+                                mkdir -p $WORKSPACE/certificate
+                                az keyvault secret show --name docker-crt --vault-name ${currentKeyVault} --query value -o tsv > $WORKSPACE/certificate/certificate.crt
+                                sudo docker build --build-arg KEYSTORE_PASS=$KEYSTORE_PASS --network=host -t codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag} .
+                                echo $PASSWD | docker login codaregistry.azurecr.io -u $USERNAME --password-stdin
+                                sudo docker push codaregistry.azurecr.io/${params.SERVICE_NAME}:${imageTag}
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+
+
+        stage('Trivy Scan (dev Only)') {
+            when { expression { params.ENVIRONMENT == 'dev' && params.RUN_DOCKER_SCAN } }
+            steps {
+                script {
+                    sh "mkdir -p ${WORKSPACE}/reports"
+
+                    sh """
+                        chmod +x ${WORKSPACE}/pipeline-scripts/backendservices/scripts/trivy_scan.sh
+                        ${WORKSPACE}/pipeline-scripts/backendservices/scripts/trivy_scan.sh ${params.SERVICE_NAME} ${imageTag}
+                    """
+
+                    sh """
+                        python3 -m venv ${WORKSPACE}/venv
+                        ${WORKSPACE}/venv/bin/pip install --upgrade pip pandas openpyxl
+                        ${WORKSPACE}/venv/bin/python ${WORKSPACE}/pipeline-scripts/backendservices/scripts/convert_to_excel.py \
+                            ${params.SERVICE_NAME}_${imageTag}_audit_report.json \
+                            ${WORKSPACE}/reports/${params.SERVICE_NAME}_${imageTag}_audit_report.xlsx \
+                            ${WORKSPACE}/trivy_status.txt
+                    """
+
+                    sh """
+                        chmod +x ${WORKSPACE}/pipeline-scripts/backendservices/scripts/upload_to_storage.sh
+                        ${WORKSPACE}/pipeline-scripts/backendservices/scripts/upload_to_storage.sh \
+                            ${currentsa} ${currentKeyVault} ${currentsaKeySecret} ${STORAGE_CONTAINER} \
+                            ${params.ENVIRONMENT}/${params.SERVICE_NAME} ${imageTag} ${params.SERVICE_NAME} \
+                            ${WORKSPACE}/${params.SERVICE_NAME}_${imageTag}_audit_report.json \
+                            ${WORKSPACE}/reports/${params.SERVICE_NAME}_${imageTag}_audit_report.xlsx
+                    """
+
+                    def status = readFile("${WORKSPACE}/trivy_status.txt").trim()
+                    if (status == "FAIL") {
+                        error("Vulnerability thresholds exceeded! Failing pipeline.")
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+
+            steps {
+
+                sh "az login --identity"
+
+                 sh "az aks get-credentials --name ${currentCluster} --resource-group ${currentresourceGroup} --overwrite-existing"
+
+                 sh "sed -i 's/ENVIRONMENT-BUILD_NUMBER/${imageTag}/' ${currentYaml}"
+
+                 sh "kubectl apply -f ${currentYaml}"
+
+              // sh "helm install ${SERVICE_NAME} ./pipeline-scripts/helm  -n coda${ENVIRONMENT} -f pipeline-scripts/helm/values/${SERVICE_NAME}.yaml --set namespace=coda${ENVIRONMENT} --set image.repository=codaregistry.azurecr.io/${params.SERVICE_NAME} --set image.tag=${imageTag}   --set env[0].value=${ENVIRONMENT} --set env[1].value=${ENVIRONMENT}"
+                //  sh "helm upgrade ${SERVICE_NAME} ./pipeline-scripts/helm -n coda${ENVIRONMENT}  -f pipeline-scripts/helm/values/${SERVICE_NAME}.yaml --set namespace=coda${ENVIRONMENT} --set image.repository=codaregistry.azurecr.io/${params.SERVICE_NAME} --set image.tag=${imageTag}   --set env[0].value=${ENVIRONMENT} --set env[1].value=${ENVIRONMENT}"				 
+
+            }
+
+        }
+ 
+
+        stage('Resolve Service & Wait Until UP') {
+            steps {
+                script {
+
+                    /* -------- Service Name Mapping -------- */
+                    def serviceMap = [
+                        cacheservice                : 'cache',
+                        cloudgateway                : 'cloudgateway',
+                        documentmanagementservice   : 'docmanagement',
+                        fileingestionservice        : 'fileingestion',
+                        internationservice          : 'internationalservice',
+                        iprdfintegrationservices    : 'iprdfintegrationservices',
+                        mailservice                 : 'mailservice',
+                        netsuiteintegrationservices : 'netsuiteintegration',
+                        participantservice          : 'participant',
+                        playlistandtitlemanagement  : 'playlistandtitman',
+                        searchservice               : 'searchservice',
+                        securityservice             : 'securityservice',
+                        serviceregistry             : 'serviceregistry'
+                    ]
+
+                    def service = serviceMap[params.SERVICE_NAME]
+
+                    if (!service) {
+                        echo "No service mapping found for '${params.SERVICE_NAME}'. Skipping this stage."
+                        return   // 👈 skips remaining logic in this stage
+                    }
+
+                    /* -------- Build URL -------- */
+                    def url = "https://${params.ENVIRONMENT}${service}.afmsagaftrafund.org/swagger-ui/index.html#"
+                    echo "Checking service URL: ${url}"
+
+                    /* -------- Poll Until Service Is UP -------- */
+                    while (true) {
+                        def statusCode = sh(
+                            script: """
+                                curl -I -s -o /dev/null -w "%{http_code}" ${url}
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        echo "HTTP Status Code: ${statusCode}"
+
+                        if (statusCode == '200' || statusCode == '302') {
+                            echo "Service is UP (${statusCode})"
+                            break
+                        }
+
+                        echo "Service not ready. Retrying in ${env.RETRY_INTERVAL} seconds..."
+                        sleep time: env.RETRY_INTERVAL.toInteger(), unit: 'SECONDS'
+                    }
+                }
+            }
+        }
+
+        stage('Notify Success') {
+            steps {
+                script {
+                    notifyTeam(
+                        env: params.ENVIRONMENT,
+                        serviceName: params.SERVICE_NAME,
+                        buildNumber: env.BUILD_NUMBER,
+                        buildUrl: env.BUILD_URL,
+                        type: 'success',
+                        triggeredBy: buildUser
+                    )
+                }
+            }
+        }
+
+        stage('Clean Up') {
+            steps {
+                sh 'sudo docker system prune --all --volumes -f'
+                cleanWs()
+            }
+        }
+    }
+}
+ 
