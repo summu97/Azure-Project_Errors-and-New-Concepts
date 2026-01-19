@@ -1,0 +1,38 @@
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+
+
+verify:nvm --version
+
+Install a specific Node version: 
+nvm install 24.11.0
+
+
+Use that version
+nvm use 24.11.0
+
+
+Check:
+node -v
+npm -v
+
+
+(Optional) Set default Node version:
+nvm alias default 24.11.0
+
+
+### Hold Node.js package (recommended)
+1️⃣ Check Node package name
+dpkg -l | grep nodejs
+
+Usually it’s: nodejs
+
+
+Put Node.js on hold (PREVENT upgrades)
+sudo apt-mark hold nodejs
+
+Verify hold status
+apt-mark showhold
+
+
+Expected output: nodejs
