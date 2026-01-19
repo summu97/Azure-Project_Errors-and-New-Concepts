@@ -1,3 +1,38 @@
+
+sudo mv /usr/local/bin/node /usr/local/bin/node_old
+sudo mv /usr/local/bin/npm /usr/local/bin/npm_old
+
+if you get:
+jenkinsadmin@Jenkins-BuildServer:/var/lib/jenkins$ node -v
+-bash: /usr/local/bin/node: No such file or directory
+
+but if you run and get :
+jenkinsadmin@Jenkins-BuildServer:/var/lib/jenkins$ /usr/bin/node -v
+v22.22.0
+
+
+then do this:
+jenkinsadmin@Jenkins-BuildServer:/var/lib/jenkins$ node -v
+-bash: /usr/local/bin/node: No such file or directory
+jenkinsadmin@Jenkins-BuildServer:/var/lib/jenkins$ export PATH=/usr/bin:$PATH
+jenkinsadmin@Jenkins-BuildServer:/var/lib/jenkins$ source ~/.bashrc
+node -v
+v22.22.0
+jenkinsadmin@Jenkins-BuildServer:/var/lib/jenkins$ which node
+/usr/bin/node
+jenkinsadmin@Jenkins-BuildServer:/var/lib/jenkins$
+
+
+
+
+
+
+
+
+
+
+
+
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 source ~/.bashrc
 
