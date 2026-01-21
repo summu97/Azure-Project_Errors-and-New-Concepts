@@ -1,0 +1,291 @@
+jenkinsadmin@Jenkins-BuildServer:~/SQL_Report_Scripts$ cat export_UATSQL_reports.sh
+#!/bin/bash
+# ================================================
+# SQL → CSV → Upload to Azure Blob Storage (UAT)
+# ======================================================
+
+set -e  # Exit immediately if a command exits with a non-zero status
+
+# -----------------------
+# Configuration Variables
+# -----------------------
+STORAGE_ACCOUNT="codadevsa"
+CONTAINER_NAME="codauat"
+REPORTS_DIR="reports"
+SUBFOLDERS=("Unclaimed_Ending_Balance" "Unclaimed_Activities" "Playlist_MatchTypes" "Accounting_Distribution" "Allocation_by_Source_Title_Participant" "Allocation_by_Source_Title" "Allocation_by_Source" "USP_GetPaymentAllocations")
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+OUTPUT_DIR="/home/jenkinsadmin/SQL_Report_Scripts/reports_output"
+LOG_FILE="/home/jenkinsadmin/SQL_Report_Scripts/report_logs/QASQL_reports.log"
+SQLCMD="/opt/mssql-tools/bin/sqlcmd"
+ENV="UAT"
+
+SQL_SERVER="codauatdbserver.database.windows.net"
+DB_NAME="CODA_MIGRATION"
+KEYVAULT_NAME="CODAUAT-KEYVAULT"  # Your Azure Key Vault name
+
+# -----------------------
+# Fetch database credentials from Key Vault
+# -----------------------
+DB_USER=$(az keyvault secret show --name "SQL${ENV}USER" --vault-name "$KEYVAULT_NAME" --query "value" -o tsv)
+DB_PASS=$(az keyvault secret show --name "SQL${ENV}PASSWORD" --vault-name "$KEYVAULT_NAME" --query "value" -o tsv)
+
+# -----------------------
+# Ensure local output directory exists
+# -----------------------
+mkdir -p "$OUTPUT_DIR"
+
+
+# -----------------------
+# Report file definitions
+# -----------------------
+declare -A REPORTS
+REPORTS["Unclaimed_Ending_Balance"]="$OUTPUT_DIR/Unclaimed_Ending_Balance_${ENV}_${TIMESTAMP}.csv"
+REPORTS["Unclaimed_Activities"]="$OUTPUT_DIR/Unclaimed_Activities_${ENV}_${TIMESTAMP}.csv"
+REPORTS["Playlist_MatchTypes"]="$OUTPUT_DIR/Playlist_MatchTypes_${ENV}_${TIMESTAMP}.csv"
+REPORTS["Accounting_Distribution"]="$OUTPUT_DIR/Distribution_${ENV}_${TIMESTAMP}.csv"
+REPORTS["Allocation_by_Source_Title_Participant"]="$OUTPUT_DIR/Allocation_by_Source_Title_Participant_${ENV}_${TIMESTAMP}.csv"
+REPORTS["Allocation_by_Source_Title"]="$OUTPUT_DIR/Allocation_by_Source_Title_${ENV}_${TIMESTAMP}.csv"
+REPORTS["Allocation_by_Source"]="$OUTPUT_DIR/Allocation_by_Source_${ENV}_${TIMESTAMP}.csv"
+REPORTS["USP_GetPaymentAllocations"]="$OUTPUT_DIR/USP_GetPaymentAllocations_${ENV}_${TIMESTAMP}.csv"
+
+
+# -----------------------
+# Ensure container exists
+# -----------------------
+az storage container create \
+  --name "$CONTAINER_NAME" \
+  --account-name "$STORAGE_ACCOUNT" \
+  --auth-mode login -o none
+
+
+# -----------------------
+# Ensure 'reports' root folder exists
+# -----------------------
+if ! az storage blob exists \
+    --account-name "$STORAGE_ACCOUNT" \
+    --container-name "$CONTAINER_NAME" \
+    --name "$REPORTS_DIR/.keep" \
+    --auth-mode login -o tsv | grep -q True; then
+    az storage blob upload \
+      --account-name "$STORAGE_ACCOUNT" \
+      --container-name "$CONTAINER_NAME" \
+      --name "$REPORTS_DIR/.keep" \
+      --file /dev/null \
+      --auth-mode login -o none
+fi
+
+# -----------------------
+# Loop through and create subfolders
+# -----------------------
+for SUB in "${SUBFOLDERS[@]}"; do
+  SUB_PATH="$REPORTS_DIR/$SUB/.keep"
+
+  if ! az storage blob exists \
+      --account-name "$STORAGE_ACCOUNT" \
+      --container-name "$CONTAINER_NAME" \
+      --name "$SUB_PATH" \
+      --auth-mode login -o tsv | grep -q True; then
+      az storage blob upload \
+        --account-name "$STORAGE_ACCOUNT" \
+        --container-name "$CONTAINER_NAME" \
+        --name "$SUB_PATH" \
+        --file /dev/null \
+        --auth-mode login -o none
+
+      echo "✅ Created folder: $REPORTS_DIR/$SUB"
+  else
+      echo "ℹ️ Folder already exists: $REPORTS_DIR/$SUB"
+  fi
+done
+
+# -----------------------
+# Run SQL query and export to CSV
+# -----------------------
+
+# UnClaimed Ending Balance Report
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "SELECT [LKPA].[Description] AS [Transaction Type], [FM].BusinessFileManagerId AS [Source], [PH].[Account#] AS [Participant Account#], COALESCE(PH.LastName, '') + ', ' + COALESCE(PH.FirstName, '') + ' ' + COALESCE(PH.MiddleName, '') AS [Participant Name], [UPIV].[Amt] AS [Amount], [LKPB].[KeyCode] AS [Held Code], [LKPB].[Description] AS [Held Code Description], [UPI].[HeldDate] AS [Held Date] FROM [Payment].[UnClaimedPaymentIdentifierValue] UPIV WITH (NOLOCK) INNER JOIN [Payment].[UnClaimedPaymentIdentifier] UPI WITH (NOLOCK) ON UPI.ID = UPIV.UnClaimedPaymentIdentifierID INNER JOIN [Dist].[DistQueue] DQ WITH (NOLOCK) ON DQ.ID = UPI.DistQueueID INNER JOIN [dbo].[Lookup] LKPA WITH (NOLOCK) ON LKPA.LookupId = DQ.DistTransTypeID INNER JOIN [dbo].[Lookup] LKPB WITH (NOLOCK) ON LKPB.LookupId = UPI.HeldCodeID INNER JOIN [PlayList].[FileManager] FM WITH (NOLOCK) ON FM.ID = UPIV.FileManagerID INNER JOIN [Participant].[ParticipantHeader] PH WITH (NOLOCK) ON PH.ID = UPIV.ParticipantHeaderID WHERE UPIV.IsActive = 1 AND UPI.IsActive = 1 AND UPI.IsReleased = 0 AND LKPA.IsActive = 1 AND LKPB.IsActive = 1 AND FM.IsActive = 1 AND PH.IsActive = 1;" \
+       -o "${REPORTS[Unclaimed_Ending_Balance]}" -s "," -W
+
+# UnClaimed Activities Report
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "SELECT [LKPA].[Description] AS [Transaction Type], [FM].[BusinessFileManagerId] AS [Source], [PH].[Account#] AS [Participant Account#], COALESCE(PH.LastName, '') + ', ' + COALESCE(PH.FirstName, '') + ' ' + COALESCE(PH.MiddleName, '') AS [Participant Name], [UPIV].[Amt] AS [Amount], [LKPB].[KeyCode] AS [Code], [LKPB].[Description] AS [Code Description], [UPI].[HeldDate] AS [Held Date], CASE WHEN [UPI].[IsReleased] = 1 THEN 'TRUE' ELSE 'FALSE' END AS [Amount Released], [UPI].[ReleaseDate] AS [Release Date] FROM [Payment].[UnClaimedPaymentIdentifierValue] UPIV WITH (NOLOCK) INNER JOIN [Payment].[UnClaimedPaymentIdentifier] UPI WITH (NOLOCK) ON UPI.ID = UPIV.UnClaimedPaymentIdentifierID INNER JOIN [Dist].[DistQueue] DQ WITH (NOLOCK) ON DQ.ID = UPI.DistQueueID INNER JOIN [dbo].[Lookup] LKPA WITH (NOLOCK) ON LKPA.LookupId = DQ.DistTransTypeID INNER JOIN [dbo].[Lookup] LKPB WITH (NOLOCK) ON LKPB.LookupId = UPI.HeldCodeID INNER JOIN [PlayList].[FileManager] FM WITH (NOLOCK) ON FM.ID = UPIV.FileManagerID INNER JOIN [Participant].[ParticipantHeader] PH WITH (NOLOCK) ON PH.ID = UPIV.ParticipantHeaderID WHERE UPIV.IsActive = 1 AND UPI.IsActive = 1 AND LKPA.IsActive = 1 AND LKPB.IsActive = 1 AND FM.IsActive = 1 AND PH.IsActive = 1;" \
+       -o "${REPORTS[Unclaimed_Activities]}" -s "," -W
+
+
+# Playlist Match Type Results
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "WITH MatchTypeCounts AS (SELECT ph.FileManagerID, ph.PLMatchTypeID, COUNT(ph.ID) AS Count, SUM(ph.PlaylistAmount) AS TotalAmount FROM [Playlist].[PlaylistHeader] ph GROUP BY ph.FileManagerID, ph.PLMatchTypeID), TotalCounts AS (SELECT FileManagerID, SUM(Count) AS TotalRecords, SUM(TotalAmount) AS TotalAmountAll FROM MatchTypeCounts GROUP BY FileManagerID) SELECT fm.BusinessFileManagerID AS FileManagerName, lk.KeyCode AS MatchTypeName, m.Count, m.TotalAmount, CAST(ROUND((m.Count * 100.0) / t.TotalRecords, 2) AS DECIMAL(6,2)) AS PercentageContribution FROM MatchTypeCounts m INNER JOIN TotalCounts t ON m.FileManagerID = t.FileManagerID INNER JOIN [Playlist].[FileManager] fm ON m.FileManagerID = fm.ID INNER JOIN [Security].[DeptMaster] dm ON fm.DeptID = dm.ID INNER JOIN [dbo].[Lookup] lk ON m.PLMatchTypeID = lk.LookupId WHERE fm.IsActive = 1 AND dm.IsActive = 1 AND lk.IsActive = 1 AND lk.LookUpType = 'PL_MatchType' AND dm.KeyCode = 'SR' ORDER BY fm.BusinessFileManagerID, lk.KeyCode;" \
+       -o "${REPORTS[Playlist_MatchTypes]}" -s "," -W
+
+
+# Accounting/Distribution Report
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "SELECT TransactionType, SRTitleHeaderID, AVTitleHeaderID, SRTH.Title, SRTH.Artist, PerfType, SSN, [Name] AS PerformerName, [Account#], [Perf_VMA], CntrbAmt, [DeductionPCTAmt] AS DeductAmt, CntbCnt, NetAmt, CntrbShrAmt, [DedShrAmt] AS DeductShrAmt, NetShrAmt, OtherRole, AVSRSec, AVUnSec, AVUnAmtNF, AVSRAmtNF, AVUnAmtF, AVSRAmtF, AVUnNFShr, AVSRNFShr, FiscYr, DistrDate, Src, SrcYear, TransactionCode, BusinessID, RunDate, RunTime, UserID, ParticipantHeaderID, ACCT.IsActive, Acct.CreatedDate, Acct.CreatedBy, FileManagerID, RunID, Acct.ModifiedBy, Acct.ModifiedDate, SrcRunDeptID, SrcRunID, DistQueueID, PLHeaderID, PFM.BusinessFileManagerID, PFM.FileManagerDescription, SRTH.BusinessTitleID FROM [Account].[DRAllocationAcct] ACCT WITH (NOLOCK) INNER JOIN [PlayList].[FileManager] PFM WITH (NOLOCK) ON ACCT.FileManagerID = PFM.ID INNER JOIN [Title].[SRTitleHeader] SRTH WITH (NOLOCK) ON ACCT.SRTitleHeaderID = SRTH.ID WHERE ACCT.IsActive=1 AND PFM.IsActive=1 AND SRTH.IsActive=1;" \
+       -o "${REPORTS[Accounting_Distribution]}" -s "," -W
+
+
+# Allocation by Source, Title & Participant
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "SELECT PFM.BusinessFileManagerID AS Source, SRTH.BusinessTitleID AS [Title ID#], ACCT.Title AS Title, ACCT.[Account#] AS [Participant Account#], ACCT.Name AS [Participant Name], SUM(NetShrAmt) AS [Total Amount] FROM [Account].[DRAllocationAcct] ACCT WITH (NOLOCK) INNER JOIN [PlayList].[FileManager] PFM WITH (NOLOCK) ON ACCT.FileManagerID = PFM.ID INNER JOIN [Title].[SRTitleHeader] SRTH WITH (NOLOCK) ON ACCT.SRTitleHeaderID = SRTH.ID WHERE ACCT.IsActive = 1 AND PFM.IsActive = 1 AND SRTH.IsActive = 1 GROUP BY PFM.BusinessFileManagerID, SRTH.BusinessTitleID, ACCT.Title, ACCT.[Account#], ACCT.Name;" \
+       -o "${REPORTS[Allocation_by_Source_Title_Participant]}" -s "," -W
+
+
+# Allocation by Source & Title
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "SELECT PFM.BusinessFileManagerID AS Source, SRTH.BusinessTitleID AS [Title ID#], ACCT.Title AS Title, SUM(NetShrAmt) AS [Total Amount] FROM [Account].[DRAllocationAcct] ACCT WITH (NOLOCK) INNER JOIN [PlayList].[FileManager] PFM WITH (NOLOCK) ON ACCT.FileManagerID = PFM.ID INNER JOIN [Title].[SRTitleHeader] SRTH WITH (NOLOCK) ON ACCT.SRTitleHeaderID = SRTH.ID WHERE ACCT.IsActive = 1 AND PFM.IsActive = 1 AND SRTH.IsActive = 1 GROUP BY PFM.BusinessFileManagerID, SRTH.BusinessTitleID, ACCT.Title;" \
+       -o "${REPORTS[Allocation_by_Source_Title]}" -s "," -W
+
+
+# Allocation by Source
+$SQLCMD -S "$SQL_SERVER" \
+       -d "$DB_NAME" \
+       -U "$DB_USER" \
+       -P "$DB_PASS" \
+       -Q "SELECT PFM.BusinessFileManagerID AS Source, SUM(NetShrAmt) AS [Total Amount] FROM [Account].[DRAllocationAcct] ACCT WITH (NOLOCK) INNER JOIN [PlayList].[FileManager] PFM WITH (NOLOCK) ON ACCT.FileManagerID = PFM.ID INNER JOIN [Title].[SRTitleHeader] SRTH WITH (NOLOCK) ON ACCT.SRTitleHeaderID = SRTH.ID WHERE ACCT.IsActive = 1 AND PFM.IsActive = 1 AND SRTH.IsActive = 1 GROUP BY PFM.BusinessFileManagerID;" \
+       -o "${REPORTS[Allocation_by_Source]}" -s "," -W
+
+# USP_GetPaymentAllocations
+#$SQLCMD -S "$SQL_SERVER" \
+#       -d "$DB_NAME" \
+#       -U "$DB_USER" \
+#       -P "$DB_PASS" \
+#       -Q "EXEC [Report].[USP_GetPaymentAllocations];" \
+#       -o "${REPORTS[USP_GetPaymentAllocations]}" -s "," -W
+
+# -----------------------
+# Loop through and upload each file
+# -----------------------
+for REPORT_NAME in "${!REPORTS[@]}"; do
+    OUTPUT_FILE="${REPORTS[$REPORT_NAME]}"
+    BLOB_PATH="$REPORTS_DIR/$REPORT_NAME/$(basename "$OUTPUT_FILE")"
+
+    echo "[$(date)]   Uploading $REPORT_NAME → $BLOB_PATH" >> "$LOG_FILE"
+
+    if az storage blob upload \
+        --account-name "$STORAGE_ACCOUNT" \
+        --container-name "$CONTAINER_NAME" \
+        --name "$BLOB_PATH" \
+        --file "$OUTPUT_FILE" \
+        --overwrite true \
+        --auth-mode login -o none; then
+
+        echo "[$(date)] ✅ Uploaded $(basename "$OUTPUT_FILE") to '$CONTAINER_NAME/$BLOB_PATH'" >> "$LOG_FILE"
+        rm -f "$OUTPUT_FILE"
+    else
+        echo "[$(date)] ❌ Upload failed for $OUTPUT_FILE" >> "$LOG_FILE"
+    fi
+done
+
+echo "[$(date)]   All available report uploads processed." >> "$LOG_FILE"
+jenkinsadmin@Jenkins-BuildServer:~/SQL_Report_Scripts$ cat
+DEV_IC_ClaimFileReqQueue.sh                        UAT_SR_CutOff_Tables.sh                            export_DEVSQL_reports.sh
+QA_IC_ClaimFileReqQueue.sh                         UAT_SR_Playlist_Source_Status_Stats.sh             export_QASQL_reports.sh
+QA_USP_GenerateSRTitlePageFieldStats.sh            UAT_SR_Title_Page_Field_Stats.sh                   export_UATSQL_reports.sh
+UAT_Distribution_Allocation.sh                     UAT_USP_GenerateSRTitlePageFieldStats.sh           report_logs/
+UAT_IC_ClaimFileReqQueue.sh                        UAT_Unclaimed_Ending_Balance.sh                    reports_output/
+UAT_Playlist_Match_Type_Results.sh                 USP_GetPaymentAllocations_UAT_20260121_115141.csv
+jenkinsadmin@Jenkins-BuildServer:~/SQL_Report_Scripts$ cat U
+UAT_Distribution_Allocation.sh                     UAT_SR_CutOff_Tables.sh                            UAT_USP_GenerateSRTitlePageFieldStats.sh
+UAT_IC_ClaimFileReqQueue.sh                        UAT_SR_Playlist_Source_Status_Stats.sh             UAT_Unclaimed_Ending_Balance.sh
+UAT_Playlist_Match_Type_Results.sh                 UAT_SR_Title_Page_Field_Stats.sh                   USP_GetPaymentAllocations_UAT_20260121_115141.csv
+jenkinsadmin@Jenkins-BuildServer:~/SQL_Report_Scripts$ cat UAT_Distribution_Allocation.sh
+#!/bin/bash
+
+LOG_FILE="/home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_Distribution_Allocation.log"
+
+# Redirect all stdout and stderr to the log
+exec >> "$LOG_FILE" 2>&1
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting script..."
+
+set -e  # exit on any error
+
+SQLCMD="/opt/mssql-tools/bin/sqlcmd"
+SQL_SERVER="codauatdbserver.database.windows.net"
+DB_NAME="CODA_MIGRATION"
+KEYVAULT_NAME="CODAUAT-KEYVAULT"
+ENV="UAT"
+
+# Fetch DB credentials
+DB_USER=$(az keyvault secret show --name "SQL${ENV}USER" --vault-name "$KEYVAULT_NAME" --query "value" -o tsv)
+DB_PASS=$(az keyvault secret show --name "SQL${ENV}PASSWORD" --vault-name "$KEYVAULT_NAME" --query "value" -o tsv)
+
+echo "Running stored procedure..."
+
+$SQLCMD -S "$SQL_SERVER" \
+        -d "$DB_NAME" \
+        -U "$DB_USER" \
+        -P "$DB_PASS" \
+        -Q "EXEC [Report].[USP_DistributionAllocation];"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Script finished successfully."
+jenkinsadmin@Jenkins-BuildServer:~/SQL_Report_Scripts$ crontab -l
+# Edit this file to introduce tasks to be run by cron.
+#
+# Each task to run has to be defined through a single line
+# indicating with different fields when the task will be run
+# and what command to run for the task
+#
+# To define the time you can provide concrete values for
+# minute (m), hour (h), day of month (dom), month (mon),
+# and day of week (dow) or use '*' in these fields (for 'any').
+#
+# Notice that tasks will be started based on the cron's system
+# daemon's notion of time and timezones.
+#
+# Output of the crontab jobs (including errors) is sent through
+# email to the user the crontab file belongs to (unless redirected).
+#
+# For example, you can run a backup of all your user accounts
+# at 5 a.m every week with:
+# 0 5 * * 1 tar -zcf /var/backups/home.tgz /home/
+#
+# For more information see the manual pages of crontab(5) and cron(8)
+#
+# m h  dom mon dow   command
+
+
+# DEV
+33 3 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_DEVSQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/DEVSQL_reports.log 2>&1
+*/5 * * * * /home/jenkinsadmin/SQL_Report_Scripts/DEV_IC_ClaimFileReqQueue.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/DEV_IC_ClaimFileReqQueue_cron.log 2>&1
+
+
+# QA
+30 1 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_QASQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/cron_QASQL.log 2>&1
+*/5 * * * * /home/jenkinsadmin/SQL_Report_Scripts/QA_IC_ClaimFileReqQueue.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/QA_IC_ClaimFileReqQueue_cron.log 2>&1
+30 3 * * * /home/jenkinsadmin/SQL_Report_Scripts/QA_USP_GenerateSRTitlePageFieldStats.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/QA_USP_GenerateSRTitlePageFieldStats_cron.log 2>&1
+
+
+# UAT
+30 1 * * * /home/jenkinsadmin/SQL_Report_Scripts/export_UATSQL_reports.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/cron_UATSQL.log 2>&1
+
+0 * * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_IC_ClaimFileReqQueue.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_IC_ClaimFileReqQueue_cron.log 2>&1
+30 3 * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_USP_GenerateSRTitlePageFieldStats.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_USP_GenerateSRTitlePageFieldStats_cron.log 2>&1
+
+# 22-12-2025
+# 30 23 * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_Distribution_Allocation.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_Distribution_Allocation_cron.log 2>&1
+# 40 23 * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_Playlist_Match_Type_Results.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_Playlist_Match_Type_Results_cron.log 2>&1
+# 50 23 * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_SR_CutOff_Tables.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_SR_CutOff_Tables_cron.log 2>&1
+# 0 0 * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_SR_Playlist_Source_Status_Stats.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_SR_Playlist_Source_Status_Stats_cron.log 2>&1
+# 10 0 * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_SR_Title_Page_Field_Stats.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_SR_Title_Page_Field_Stats_cron.log 2>&1
+# 20 0 * * * /home/jenkinsadmin/SQL_Report_Scripts/UAT_Unclaimed_Ending_Balance.sh >> /home/jenkinsadmin/SQL_Report_Scripts/report_logs/UAT_Unclaimed_Ending_Balance_cron.log 2>&1
+jenkinsadmin@Jenkins-BuildServer:~/SQL_Report_Scripts$
