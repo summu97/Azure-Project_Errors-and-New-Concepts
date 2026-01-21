@@ -1,0 +1,195 @@
+Az Key_Vault Commands:
+
+az keyvault list
+az keyvault secret list --vault-name CODA-PROD-Azure-KeyVault | grep -i id
+az keyvault secret show --vault-name CODA-PROD-Azure-KeyVault --name CODAPRODSA-PRIMARY-KEY
+
+
+az keyvault secret show --vault-name CODADEV --name grafana-client-id --query value -o tsv
+az keyvault secret show --vault-name CODADEV --name grafana-sso-client-secret --query value -o tsv
+az keyvault secret show --vault-name CODADEV --name CODADEVSMTPPASSWORD --query value -o tsv
+
+List all Key Vault:
+az keyvault list
+
+List all secrets in a Key Vault: 
+az keyvault secret list --vault-name CODA-PROD-Azure-KeyVault -o table
+Ex:
+az keyvault secret list --vault-name CODA-PROD-Azure-KeyVault | grep -i id
+
+
+Show details of a specific secret: 
+az keyvault secret show --name <secret-name> --vault-name CODA-PROD-Azure-KeyVault
+Ex:az keyvault secret show --vault-name CODA-PROD-Azure-KeyVault --name CODAPRODSA-PRIMARY-KEY --query value -o tsv
+
+
+Set (Create/Update) a secret: 
+az keyvault secret set --name db-password --vault-name CODA-PROD-Azure-KeyVault --value "P@ssw0rd123"
+
+Update a secret’s attributes (e.g., disable/enable): 
+az keyvault secret set-attributes --name <secret-name> --vault-name CODA-PROD-Azure-KeyVault --enabled false                                                            
+
+Delete a secret: 
+az keyvault secret delete --name <secret-name> --vault-name CODA-PROD-Azure-KeyVault
+
+List deleted secrets (soft delete enabled): 
+az keyvault secret list-deleted --vault-name CODA-PROD-Azure-KeyVault
+
+=====================================================
+STORAGE
+=====================================================
+
+List all Storage Accounts in a subscription:
+az storage account list -o table
+
+
+List all Storage Accounts in a specific resource group:
+az storage account list --resource-group <rg-name> -o table
+Ex:
+az storage account list --resource-group CODA_RG -o table
+
+
+Show details of a specific Storage Account:
+az storage account show --name <storage-account-name> --resource-group <rg-name>
+Ex:
+az storage account show --name codadevsa --resource-group CODA_RG
+
+
+Get keys for a Storage Account:
+az storage account keys list --account-name <storage-account-name> --resource-group <rg-name>
+Ex:
+az storage account keys list --account-name <storage-account-name> --resource-group CODA_RG
+
+
+Show connection string:
+az storage account show-connection-string --name <storage-account-name> --resource-group <rg-name>
+Ex:
+az storage account show-connection-string --name <storage-account-name> --resource-group CODA_RG
+
+
+List All Blob Containers:
+az storage container list --account-name codadevsa  --auth-mode login -o table
+
+
+List Blobs Inside Container:
+az storage blob list --account-name codadevsa --container-name sql-backup --auth-mode login -o table
+
+
+blob files list:
+az storage blob list   --account-name codadevsa   --container-name codadev   --prefix INTERNATIONAL_IC/   --auth-mode login   --output table
+
+
+Download file:
+az storage blob download   --account-name codadevsa   --container-name codadev   --name "INTERNATIONAL_IC/<filename>"   --file "./<filename>"   --auth-mode login
+
+Copy to local from VM:
+scp -i /c/Aftra/Jenkins/jekins-buildserver.pem jenkinsadmin@10.0.1.11:/home/jenkinsadmin/<filename> .
+Ex:
+scp -i /c/Aftra/Jenkins/jekins-buildserver.pem jenkinsadmin@10.0.1.11:/home/jenkinsadmin/performer_details_QA.csv .
+
+scp -i C:\Aftra\Jenkins\jekins-buildserver.pem jenkinsadmin@10.0.1.11:/home/jenkinsadmin/SQL_Report_Scripts/USP_GetPaymentAllocations_UAT_20260121_115141.csv .
+
+az storage blob download   --account-name codadevsa   --container-name codauat   --name "reports/USP_GetPaymentAllocations/USP_GetPaymentAllocations_UAT_20260121_115141.csv"   --file "./USP_GetPaymentAllocations_UAT_20260121_115141.csv"   --auth-mode login
+
+
+
+Copy local files to VM:
+scp -i "/c/Aftra/Jenkins/jekins-buildserver.pem" "/c/Users/sbade/SR – Playlist Source Status Stat.sql" jenkinsadmin@10.0.1.11:/home/jenkinsadmin/SQL_Report_Scripts/
+=======================================================
+SQL SERVER
+=======================================================
+
+List all SQL Servers in a subscription
+az sql server list -o table
+
+List SQL Servers in a specific resource group
+az sql server list --resource-group CODA_RG -o table
+
+List all databases on a specific SQL Server
+az sql db list --server <server-name> --resource-group CODA_RG -o table
+Ex:
+az sql db list --server codauatdbserver --resource-group CODA_RG -o table
+
+
+Show details of a specific database
+az sql db show --name <db-name> --server <server-name> --resource-group CODA_RG
+Ex:
+az sql db show --name CODA_MIGRATION --server test-coda --resource-group CODA_RG
+
+
+List elastic pools (if used)
+az sql elastic-pool list --server <server-name> --resource-group CODA_RG -o table
+
+List connection strings
+az sql db show-connection-string --server <server-name> --name <db-name> --client ado.net
+Ex:
+az sql db show-connection-string --server test-coda --name CODA_MIGRATION --client ado.net
+
+
+Connect to SQL Server from Jenkins VM and run queries
+sqlcmd -S <SQL_SERVER_NAME>.database.windows.net -d <DATABASE_NAME> -U <SQL_USER> -P <SQL_PASSWORD>
+Ex:
+sqlcmd -S test-coda.database.windows.net -d CODA-2024-5-8-12-4-DEV -U sqladmin -P "M*O+p03qTA%Laa&xgSzkrf^&rrEw@"
+
+Run SQL query through file:
+sqlcmd -S "codauatdbserver.database.windows.net" \
+       -d "CODA_MIGRATION" \
+       -U "CODAAdminUAT" \
+       -P 'G7f$2^pZ!k9@Hn3&Qv*8#XyRt5!LmD' \
+       -i "/home/jenkinsadmin/SQL_Report_Scripts/SR-Playlist_Source_Status_Stat.sql" \
+       -o "SR_Playlist_Source_Status_Stat_UAT_$(date +'%Y%m%d_%H%M%S').csv" \
+       -s "," -W
+
+
+connect to sqlcmd:
+sqlcmd -S "codauatdbserver.database.windows.net" -d "CODA_MIGRATION" -U "CODAAdminUAT" -P 'G7f$2^pZ!k9@Hn3&Qv*8#XyRt5!LmD' -Q "EXEC [Title].[USP_MigrateTitleCredits];"
+
+Check which process is running through sqlcmd:
+
+SELECT 
+    r.session_id,
+    s.login_name,
+    r.status,
+    r.cpu_time/1000.0 AS cpu_seconds,
+    r.total_elapsed_time/1000.0 AS elapsed_seconds,
+    t.text AS running_query
+FROM sys.dm_exec_requests r
+JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
+CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
+WHERE r.session_id > 50;
+GO
+
+
+sqlcmd -S "codauatdbserver.database.windows.net" -d "CODA_MIGRATION" -U "CODAAdminUAT" -P 'G7f$2^pZ!k9@Hn3&Qv*8#XyRt5!LmD' -Q "EXEC [Title].[USP_MigrateTitleCredits];"
+
+
+
+
+
+==========================================================
+Secrets Expiry get commands
+==========================================================
+List all app registrations:
+az ad app list --query "[].{Name:displayName,AppId:appId}" -o table
+
+
+List secrets and their expiry for a specific app:
+az ad app credential list --id <APP_ID> --query "[].{KeyId:keyId,StartDate:startDate,EndDate:endDate,Type:type}" -o table
+Ex:
+az ad app credential list --id <APP_ID> --query "[].{KeyId:keyId,StartDate:startDate,EndDate:endDate,Type:type}" -o table
+
+
+List all Key Vaults in your subscription:
+az keyvault list --query "[].{Name:name,ResourceGroup:resourceGroup}" -o table
+
+
+List all secrets with expiry in a Key Vault:
+az keyvault secret list --vault-name <KV_NAME> --query "[].{Name:name,Expires:attributes.expires}" -o table
+
+
+List all certificates with expiry in a Key Vault:
+az keyvault certificate list --vault-name <KV_NAME> --query "[].{Name:name,Expires:attributes.expires}" -o table
+
+
+Azure storage account keys don’t have expiry by default, but you can list them:
+az storage account keys list --account-name <STORAGE_ACCOUNT_NAME> --query "[].{KeyName:keyName}" -o table
