@@ -1,0 +1,258 @@
+pipeline {
+    agent any
+
+    options {
+        buildDiscarder(logRotator(daysToKeepStr: '14'))
+        ansiColor('xterm')
+        timestamps()
+    }
+
+    environment {
+        STORAGE_ACCOUNT = 'codadevsa'
+        CONTAINER_NAME  = 'jenkins-backup'
+
+        BACKUP_DIR = '/var/lib/jenkins'
+        TMP_DIR    = '/tmp/jenkins_backup'
+        SNAP_DIR   = '/var/jenkins_backup_snapshots'
+
+        FULL_DAY   = '0'   // Sunday
+        KEEP_FULL  = '4'
+        AZ_AUTH_MODE = 'login'
+    }
+
+    triggers {
+        cron('H 2 * * *')
+    }
+
+    stages {
+
+        /* -----------------------------------------
+         * PREPARE
+         * ----------------------------------------- */
+        stage('Prepare') {
+            steps {
+                sh '''
+/usr/bin/env bash << 'EOF'
+set -euo pipefail
+
+echo "[INFO] Preparing backup directories..."
+
+sudo mkdir -p "$TMP_DIR"
+sudo mkdir -p "$SNAP_DIR"
+sudo chmod 700 "$SNAP_DIR"
+
+EOF
+'''
+            }
+        }
+
+        /* -----------------------------------------
+         * DECIDE BACKUP TYPE
+         * ----------------------------------------- */
+        stage('Decide Backup Type') {
+            steps {
+                script {
+                    def now = new Date()
+                    def dow = now.format('u').toInteger() % 7
+                    def isFull = (dow == env.FULL_DAY.toInteger())
+                    def ts = now.format("yyyy-MM-dd-HH-mm")
+
+                    env.BACKUP_TYPE = isFull ? "full" : "inc"
+                    env.BACKUP_NAME = "${env.BACKUP_TYPE}-${ts}.tar.gz"
+                    env.SNAP_FILE   = "${env.SNAP_DIR}/snapshot.snar"
+                }
+
+                sh '''
+/usr/bin/env bash << 'EOF'
+set -euo pipefail
+
+echo "[INFO] Backup Type : $BACKUP_TYPE"
+echo "[INFO] Backup File : $BACKUP_NAME"
+echo "[INFO] Snapshot    : $SNAP_FILE"
+
+EOF
+'''
+            }
+        }
+
+        /* -----------------------------------------
+         * CREATE BACKUP
+         * ----------------------------------------- */
+        stage('Create Backup') {
+            steps {
+                sh '''
+/usr/bin/env bash << 'EOF'
+set -euo pipefail
+
+echo "[INFO] Starting $BACKUP_TYPE backup..."
+
+EXCLUDES="
+  --exclude=$BACKUP_DIR/workspace
+  --exclude=$BACKUP_DIR/cache
+  --exclude=$BACKUP_DIR/tmp
+  --exclude=$BACKUP_DIR/log
+  --exclude=$BACKUP_DIR/logs
+"
+
+if [[ "$BACKUP_TYPE" == "full" ]]; then
+
+    echo "[INFO] FULL backup — resetting snapshot"
+    sudo rm -f "$SNAP_FILE"
+
+    sudo tar --warning=no-file-changed --ignore-failed-read \
+        --listed-incremental="$SNAP_FILE" \
+        $EXCLUDES \
+        -czf "$TMP_DIR/$BACKUP_NAME" -C /var/lib jenkins
+
+else
+
+    echo "[INFO] INCREMENTAL backup"
+
+    if [[ ! -f "$SNAP_FILE" ]]; then
+        echo "[WARN] Snapshot missing — forcing FULL backup"
+        sudo rm -f "$SNAP_FILE"
+    fi
+
+    sudo tar --warning=no-file-changed --ignore-failed-read \
+        --listed-incremental="$SNAP_FILE" \
+        $EXCLUDES \
+        -czf "$TMP_DIR/$BACKUP_NAME" -C /var/lib jenkins
+fi
+
+echo "[INFO] Backup completed: $TMP_DIR/$BACKUP_NAME"
+
+EOF
+'''
+            }
+        }
+
+        /* -----------------------------------------
+         * UPLOAD TO AZURE
+         * ----------------------------------------- */
+        stage('Upload to Azure') {
+            steps {
+                sh '''
+/usr/bin/env bash << 'EOF'
+set -euo pipefail
+
+echo "[INFO] Logging into Azure..."
+az login --identity >/dev/null
+
+echo "[INFO] Uploading backup file..."
+az storage blob upload \
+    --account-name "$STORAGE_ACCOUNT" \
+    --container-name "$CONTAINER_NAME" \
+    --name "$BACKUP_NAME" \
+    --file "$TMP_DIR/$BACKUP_NAME" \
+    --auth-mode "$AZ_AUTH_MODE"
+
+echo "[INFO] Uploading snapshot..."
+az storage blob upload \
+    --account-name "$STORAGE_ACCOUNT" \
+    --container-name "$CONTAINER_NAME" \
+    --name "snapshot.snar" \
+    --file "$SNAP_FILE" \
+    --overwrite true \
+    --auth-mode "$AZ_AUTH_MODE"
+
+echo "[INFO] Upload completed."
+
+EOF
+'''
+            }
+        }
+
+        /* -----------------------------------------
+         * RETENTION CLEANUP
+         * ----------------------------------------- */
+        stage('Retention Cleanup') {
+            steps {
+                sh '''
+/usr/bin/env bash << 'EOF'
+set -euo pipefail
+
+echo "[INFO] Starting retention cleanup..."
+
+mapfile -t FULLS < <(
+    az storage blob list \
+        --account-name "$STORAGE_ACCOUNT" \
+        --container-name "$CONTAINER_NAME" \
+        --auth-mode "$AZ_AUTH_MODE" \
+        --query "sort_by([?starts_with(name, 'full-')], &name)[].name" -o tsv
+)
+
+COUNT=${#FULLS[@]}
+echo "[INFO] Found $COUNT full backups"
+
+if (( COUNT <= KEEP_FULL )); then
+    echo "[INFO] Retention OK — no cleanup needed"
+    exit 0
+fi
+
+DEL=$((COUNT - KEEP_FULL))
+
+echo "[INFO] Cleaning $DEL old backup chains..."
+
+for ((i=0; i<DEL; i++)); do
+    OLD_FULL="${FULLS[$i]}"
+    echo "[INFO] Deleting FULL: $OLD_FULL"
+
+    az storage blob delete \
+        --account-name "$STORAGE_ACCOUNT" \
+        --container-name "$CONTAINER_NAME" \
+        --name "$OLD_FULL" \
+        --auth-mode "$AZ_AUTH_MODE"
+
+    PREFIX="${OLD_FULL%.tar.gz}"
+
+    mapfile -t INCS < <(
+        az storage blob list \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$CONTAINER_NAME" \
+            --auth-mode "$AZ_AUTH_MODE" \
+            --query "[?starts_with(name, 'inc-') && contains(name, '$PREFIX')].name" -o tsv
+    )
+
+    for inc in "${INCS[@]}"; do
+        echo "[INFO]   deleting incremental: $inc"
+
+        az storage blob delete \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$CONTAINER_NAME" \
+            --name "$inc" \
+            --auth-mode "$AZ_AUTH_MODE"
+    done
+done
+
+echo "[INFO] Retention cleanup complete."
+
+EOF
+'''
+            }
+        }
+
+        /* -----------------------------------------
+         * CLEAN LOCAL
+         * ----------------------------------------- */
+        stage('Cleanup Local') {
+            steps {
+                sh '''
+/usr/bin/env bash << 'EOF'
+set -euo pipefail
+
+echo "[INFO] Cleaning local temp..."
+sudo rm -rf "$TMP_DIR"
+
+echo "[INFO] Local cleanup done."
+
+EOF
+'''
+            }
+        }
+    }
+
+    post {
+        success { echo "✔ Backup completed successfully!" }
+        failure { echo "🔥 Backup FAILED — check logs!" }
+    }
+}
